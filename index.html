@@ -144,6 +144,38 @@
                 <p id="job-category-description" class="role-description"></p>
               </div>
 
+              <section class="job-import-card" aria-labelledby="job-import-heading">
+                <div class="panel-title" id="job-import-heading">[SEC-1B] JOB-SPECIFIC PREPARATION</div>
+                <p class="job-import-note">Paste a job description to save its structured profile and match it to reusable practice questions. Your existing local resume workflow remains private to this browser.</p>
+                <div class="job-catalogue-controls">
+                  <label for="job-search-input" class="font-mono-tech">SEARCH SAVED JOBS</label>
+                  <input id="job-search-input" class="select-field" placeholder="Role, company, or description" />
+                  <div class="job-catalogue-filters">
+                    <div><label for="job-role-filter" class="font-mono-tech">ROLE FAMILY</label><select id="job-role-filter" class="select-field"><option value="">All roles</option><option value="backend">Backend</option><option value="frontend">Frontend</option><option value="data_analyst">Data analyst</option><option value="data_engineer">Data engineer</option><option value="ml_engineer">ML engineer</option><option value="platform">Platform / DevOps</option><option value="qa_automation">QA / Automation</option><option value="security">Security</option><option value="systems">Systems</option><option value="distributed">Distributed systems</option></select></div>
+                    <div><label for="job-skill-filter" class="font-mono-tech">SKILL</label><input id="job-skill-filter" class="select-field" placeholder="e.g. Python" /></div>
+                  </div>
+                  <div class="job-list-heading" id="job-catalogue-count">Loading catalogue…</div>
+                  <div id="job-catalogue-list" class="job-catalogue-list" aria-live="polite"></div>
+                  <div class="job-pagination"><button type="button" class="btn btn-sm" id="btn-jobs-prev" disabled>PREVIOUS</button><button type="button" class="btn btn-sm" id="btn-jobs-next" disabled>NEXT</button></div>
+                </div>
+                <label for="job-title-input" class="font-mono-tech">ROLE TITLE</label>
+                <input id="job-title-input" class="select-field" maxlength="240" placeholder="e.g. Senior Backend Engineer" />
+                <label for="job-company-input" class="font-mono-tech">COMPANY (OPTIONAL)</label>
+                <input id="job-company-input" class="select-field" maxlength="200" placeholder="Company name" />
+                <div class="job-catalogue-filters">
+                  <div><label for="job-location-input" class="font-mono-tech">LOCATION (OPTIONAL)</label><input id="job-location-input" class="select-field" maxlength="200" placeholder="City, region, or remote" /></div>
+                  <div><label for="job-source-url-input" class="font-mono-tech">SOURCE URL (OPTIONAL)</label><input id="job-source-url-input" type="url" class="select-field" placeholder="https://…" /></div>
+                </div>
+                <label for="job-description-input" class="font-mono-tech">JOB DESCRIPTION</label>
+                <textarea id="job-description-input" class="job-description-input" maxlength="30000" placeholder="Paste at least 80 characters of job description..."></textarea>
+                <button type="button" class="btn btn-primary" id="btn-import-job">ANALYSE &amp; SAVE JOB</button>
+                <div id="job-import-status" class="job-import-status" aria-live="polite">Checking backend connection…</div>
+                <div id="job-selected-details"></div>
+                <div id="job-content-coverage"></div>
+                <button type="button" class="btn" id="btn-generate-plan" disabled>BUILD PREPARATION PLAN</button>
+                <div id="job-preparation-results"></div>
+              </section>
+
               <!-- Interrogation Calibration Controls -->
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 6px; border-top: 1px solid var(--border-subtle);">
                 <div>

@@ -1,3 +1,5 @@
+    import { rigorApi } from "./api.js";
+
     // =========================================================================
     // 2. DEEP TECHNICAL INTERROGATION KNOWLEDGE GRAPH (20+ ARCHETYPES)
     // =========================================================================
@@ -1998,6 +2000,8 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         savePersistedState();
       });
 
+      initializeJobPreparation();
+
       // Populate initial textarea and compile
       const rawTextarea = document.getElementById("resume-raw-textarea");
       rawTextarea.value = state.rawResumeText;
@@ -2368,3 +2372,194 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       // Export Markdown Dossier Button
       document.getElementById("btn-export-dossier").addEventListener("click", exportFullStudyDossierMarkdown);
     });
+
+    async function initializeJobPreparation() {
+      const status = document.getElementById("job-import-status");
+      const button = document.getElementById("btn-import-job");
+      const result = document.getElementById("job-preparation-results");
+      const catalogue = document.getElementById("job-catalogue-list");
+      const catalogueCount = document.getElementById("job-catalogue-count");
+      const previous = document.getElementById("btn-jobs-prev");
+      const next = document.getElementById("btn-jobs-next");
+      const generatePlan = document.getElementById("btn-generate-plan");
+      let pageOffset = 0;
+      let pageLimit = 8;
+      let selectedJobId = null;
+      let searchTimer = null;
+
+      function currentFilters() {
+        const params = { limit: pageLimit, offset: pageOffset, sort: "relevance" };
+        const q = document.getElementById("job-search-input").value.trim();
+        const role = document.getElementById("job-role-filter").value;
+        const skill = document.getElementById("job-skill-filter").value.trim();
+        if (q) params.q = q;
+        if (role) params.role_family = role;
+        if (skill) params.skill = skill;
+        return params;
+      }
+
+      async function loadCatalogue() {
+        catalogueCount.textContent = "LOADING JOB CATALOGUE…";
+        try {
+          const page = await rigorApi.listJobs(currentFilters());
+          catalogueCount.textContent = `${page.total} JOB${page.total === 1 ? "" : "SAVED"} // PAGE ${Math.floor(pageOffset / pageLimit) + 1}`;
+          catalogue.innerHTML = page.items.length ? page.items.map(job =>
+            `<button type="button" class="job-list-button" data-job-id="${escapeHtml(job.id)}"><strong>${escapeHtml(job.role_title)}${job.is_demo ? " · DEMO" : ""}</strong><span>${escapeHtml(job.company_name || "Company not specified")} · ${escapeHtml(job.role_family.replaceAll("_", " "))}${job.seniority ? ` · ${escapeHtml(job.seniority)}` : ""}</span><span>${escapeHtml([...(job.required_skills || []), ...(job.preferred_skills || [])].join(", ") || "No recognized skill tags")}</span></button>`
+          ).join("") : `<p class="job-import-note">No matching jobs. Import a description below or clear the filters.</p>`;
+          catalogue.querySelectorAll("[data-job-id]").forEach(item => {
+            item.addEventListener("click", () => selectJob(item.dataset.jobId));
+          });
+          previous.disabled = pageOffset === 0;
+          next.disabled = page.next_offset === null;
+        } catch (error) {
+          catalogueCount.textContent = "CATALOGUE UNAVAILABLE";
+          catalogue.innerHTML = `<p class="job-import-note">${escapeHtml(error.message)}. Browser-based practice remains available.</p>`;
+          previous.disabled = true;
+          next.disabled = true;
+        }
+      }
+
+      function renderCoverage(coverage) {
+        const missingQuestions = coverage.required_skills_without_questions || [];
+        const missingModules = coverage.required_skills_without_learning || [];
+        document.getElementById("job-content-coverage").innerHTML = `<div class="job-detail-block"><div class="job-list-heading">CONTENT COVERAGE // ${coverage.content_coverage_percent}%</div><div class="coverage-meter" role="img" aria-label="Content coverage ${coverage.content_coverage_percent} percent"><span style="width:${coverage.content_coverage_percent}%"></span></div><p>${coverage.question_count} relevant reviewed questions currently match this listing.</p><p><strong>Required skills without question coverage:</strong> ${missingQuestions.length ? missingQuestions.map(escapeHtml).join(", ") : "None"}</p><p><strong>Required skills without learning modules:</strong> ${missingModules.length ? missingModules.map(escapeHtml).join(", ") : "None"}</p><p class="job-import-note">Coverage counts tagged catalogue content; it is not a prediction of interview success.</p></div>`;
+      }
+
+      async function selectJob(jobId) {
+        selectedJobId = jobId;
+        generatePlan.disabled = true;
+        status.textContent = "LOADING JOB PROFILE AND CONTENT COVERAGE…";
+        try {
+          const [job, skills, coverage] = await Promise.all([
+            rigorApi.getJob(jobId), rigorApi.getJobSkills(jobId), rigorApi.getCoverage(jobId)
+          ]);
+          document.getElementById("job-selected-details").innerHTML = `<div class="job-detail-block"><div class="job-list-heading">${escapeHtml(job.role_title)}${job.is_demo ? " // DEMONSTRATION LISTING" : ""}</div><p>${escapeHtml(job.company_name || "Company not specified")} · ${escapeHtml(job.role_family.replaceAll("_", " "))}${job.seniority ? ` · ${escapeHtml(job.seniority)}` : ""}${job.location ? ` · ${escapeHtml(job.location)}` : ""}</p><p><strong>Required:</strong> ${skills.items.filter(x => x.requirement_type === "required").map(x => escapeHtml(x.skill)).join(", ") || "Not confidently identified"}</p><p><strong>Preferred:</strong> ${skills.items.filter(x => x.requirement_type === "preferred").map(x => escapeHtml(x.skill)).join(", ") || "Not confidently identified"}</p>${job.responsibilities.length ? `<p><strong>Responsibilities:</strong> ${job.responsibilities.map(escapeHtml).join(" · ")}</p>` : ""}<details><summary>Original job description and source</summary><p style="white-space:pre-wrap">${escapeHtml(job.description)}</p>${job.source_url ? `<a href="${escapeHtml(job.source_url)}" target="_blank" rel="noopener noreferrer">Open source listing</a>` : ""}</details></div>`;
+          renderCoverage(coverage.coverage);
+          status.textContent = `JOB PROFILE LOADED // CONTENT VERSION ${job.content_version}${job.is_demo ? " // DEMO DATA" : ""}`;
+          generatePlan.disabled = false;
+        } catch (error) {
+          status.textContent = `COULD NOT LOAD JOB: ${error.message}`;
+        }
+      }
+
+      function addQuestionToWorkbench(question) {
+        const id = `BANK-${question.stable_key}`;
+        let index = state.questions.findIndex(item => item.id === id);
+        if (index < 0) {
+          state.questions.push({
+            id, title: `${question.primary_skill || "Practice"} // ${question.category.replaceAll("_", " ")}`,
+            domain: question.category.toUpperCase().replaceAll("_", " "), level: question.difficulty.toUpperCase(),
+            boundClaim: question.match_reasons.join(" ") || "Recommended for the selected role.",
+            claimId: "STACK-01", prompt: question.question, intent: question.match_reasons.join(" "),
+            signals: question.expected_points, followups: [], mechanism: question.reference_answer,
+            failures: question.common_mistakes.join("\n"), codeBlueprint: "No code blueprint is attached to this practice question.",
+            l4Contrast: question.rubric, l6Contrast: question.match_reasons.join(" ")
+          });
+          index = state.questions.length - 1;
+        }
+        state.activeQuestionIndex = index;
+        updateTopTelemetryAndStats();
+        renderInterrogationView();
+        renderCompendiumView();
+        switchView("interrogation");
+      }
+
+      function renderPlan(plan) {
+        const modules = plan.learning_modules || [];
+        const questions = plan.questions || plan.modules?.[1]?.questions || [];
+        const categories = [...new Set(questions.map(question => question.category).filter(Boolean))];
+        const categoryOptions = categories.map(category => `<option value="${escapeHtml(category)}">${escapeHtml(category.replaceAll("_", " "))}</option>`).join("");
+        const moduleCards = modules.map(module => {
+          const objectives = (module.learning_objectives || []).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+          const mistakes = (module.common_mistakes || []).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+          const exercises = (module.practical_exercises || []).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+          return `<details class="recommendation-card"><summary>${escapeHtml(module.title)} · ${module.estimated_minutes} min · ${escapeHtml((module.skills || []).join(", "))}</summary><p>${escapeHtml(module.purpose)}</p><p>${escapeHtml(module.content)}</p><strong>Learning objectives</strong><ul>${objectives}</ul><strong>Common mistakes</strong><ul>${mistakes}</ul><strong>Practical exercises</strong><ul>${exercises}</ul></details>`;
+        }).join("");
+        const questionCards = questions.map(question => {
+          const reasons = (question.match_reasons || []).map(escapeHtml).join(" ") || "Relevant role-family practice.";
+          return `<article class="recommendation-card plan-question-card" data-category="${escapeHtml(question.category || "")}" data-difficulty="${escapeHtml(question.difficulty || "")}"><div class="job-list-heading">${escapeHtml(question.primary_skill || question.category)} · ${escapeHtml(question.difficulty)} · MATCH ${question.relevance_score ?? "—"}</div><p>${escapeHtml(question.question)}</p><p><strong>Why selected:</strong> ${reasons}</p><button type="button" class="btn btn-sm practice-bank-question" data-question-key="${escapeHtml(question.stable_key)}">PRACTICE IN WORKBENCH</button></article>`;
+        }).join("");
+        const filters = questions.length ? `<div class="job-catalogue-filters"><div><label for="plan-question-search" class="font-mono-tech">FILTER QUESTIONS</label><input id="plan-question-search" class="select-field" placeholder="Question text or skill" /></div><div><label for="plan-question-category" class="font-mono-tech">CATEGORY</label><select id="plan-question-category" class="select-field"><option value="">All categories</option>${categoryOptions}</select></div><div><label for="plan-question-difficulty" class="font-mono-tech">DIFFICULTY</label><select id="plan-question-difficulty" class="select-field"><option value="">All levels</option><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></div></div>` : "";
+        result.innerHTML = `<div class="job-analysis-card"><div class="job-list-heading">PREPARATION PLAN // ${questions.length} QUESTIONS // ${modules.length} LEARNING MODULES</div><h4>Recommended learning</h4>${moduleCards || "<p>No reviewed learning modules currently match this job's skills.</p>"}<h4>Ranked practice questions</h4>${filters}${questionCards || "<p>No reviewed questions match the available job skills. See uncovered skills above.</p>"}</div>`;
+        const filterPlanQuestions = () => {
+          const text = (document.getElementById("plan-question-search")?.value || "").toLowerCase();
+          const category = document.getElementById("plan-question-category")?.value || "";
+          const difficulty = document.getElementById("plan-question-difficulty")?.value || "";
+          result.querySelectorAll(".plan-question-card").forEach(card => {
+            const matchesText = !text || card.textContent.toLowerCase().includes(text);
+            const matchesCategory = !category || card.dataset.category === category;
+            const matchesDifficulty = !difficulty || card.dataset.difficulty === difficulty;
+            card.classList.toggle("hidden", !(matchesText && matchesCategory && matchesDifficulty));
+          });
+        };
+        ["plan-question-search", "plan-question-category", "plan-question-difficulty"].forEach(id => {
+          document.getElementById(id)?.addEventListener(id.endsWith("search") ? "input" : "change", filterPlanQuestions);
+        });
+        result.querySelectorAll(".practice-bank-question").forEach(button => {
+          const question = questions.find(item => item.stable_key === button.dataset.questionKey);
+          if (question) button.addEventListener("click", () => addQuestionToWorkbench(question));
+        });
+      }
+
+      try {
+        const health = await rigorApi.health();
+        status.textContent = `BACKEND ${health.status.toUpperCase()} // DATABASE ${health.database.toUpperCase()}`;
+        await loadCatalogue();
+      } catch {
+        status.textContent = "BACKEND OFFLINE // Existing browser-based workbench remains available";
+        catalogueCount.textContent = "JOB CATALOGUE OFFLINE";
+        catalogue.innerHTML = `<p class="job-import-note">Start the backend and apply migrations to browse or import jobs.</p>`;
+      }
+      ["job-search-input", "job-skill-filter"].forEach(id => document.getElementById(id).addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { pageOffset = 0; loadCatalogue(); }, 250);
+      }));
+      document.getElementById("job-role-filter").addEventListener("change", () => { pageOffset = 0; loadCatalogue(); });
+      previous.addEventListener("click", () => { pageOffset = Math.max(0, pageOffset - pageLimit); loadCatalogue(); });
+      next.addEventListener("click", () => { pageOffset += pageLimit; loadCatalogue(); });
+      generatePlan.addEventListener("click", async () => {
+        if (!selectedJobId) return;
+        generatePlan.disabled = true;
+        status.textContent = "RANKING REVIEWED CONTENT AND SAVING PLAN…";
+        try {
+          const plan = await rigorApi.createPlan(selectedJobId);
+          renderPlan(plan);
+          renderCoverage({
+            content_coverage_percent: plan.content_coverage.content_coverage_percent,
+            question_count: plan.content_coverage.question_count,
+            required_skills_without_questions: plan.content_coverage.required_skills_without_questions,
+            required_skills_without_learning: plan.content_coverage.required_skills_without_learning
+          });
+          status.textContent = "PREPARATION PLAN SAVED. RANKING EXPLANATIONS ARE SHOWN PER QUESTION.";
+        } catch (error) {
+          status.textContent = `COULD NOT CREATE PLAN: ${error.message}`;
+        } finally {
+          generatePlan.disabled = false;
+        }
+      });
+      button.addEventListener("click", async () => {
+        const roleTitle = document.getElementById("job-title-input").value.trim();
+        const companyName = document.getElementById("job-company-input").value.trim();
+        const location = document.getElementById("job-location-input").value.trim();
+        const sourceUrl = document.getElementById("job-source-url-input").value.trim();
+        const description = document.getElementById("job-description-input").value.trim();
+        if (!roleTitle || description.length < 80) {
+          status.textContent = "ENTER A ROLE TITLE AND AT LEAST 80 CHARACTERS OF JOB DESCRIPTION.";
+          return;
+        }
+        button.disabled = true;
+        status.textContent = "ANALYSING JOB DESCRIPTION…";
+        try {
+          const job = await rigorApi.importJob({ role_title: roleTitle, company_name: companyName || null, location: location || null, source_url: sourceUrl || null, description });
+          status.textContent = job.is_duplicate ? `MATCHED EXISTING JOB // ${job.version_created ? "NEW DESCRIPTION VERSION SAVED" : "NO CONTENT CHANGE"}` : "JOB IMPORTED AND DEFAULT PREPARATION PLAN SAVED.";
+          selectedJobId = job.id;
+          await selectJob(job.id);
+          renderPlan(job.preparation_plan);
+          await loadCatalogue();
+        } catch (error) {
+          status.textContent = `COULD NOT SAVE JOB: ${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    }

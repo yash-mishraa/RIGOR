@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: rigor
+      POSTGRES_USER: rigor
+      POSTGRES_PASSWORD: rigor
+    ports:
+      - "5432:5432"
+    volumes:
+      - rigor-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rigor -d rigor"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  rigor-postgres:

@@ -1,0 +1,97 @@
+"""Canonical skills and aliases used by deterministic extraction and content tagging."""
+
+SKILL_TAXONOMY = [
+    {"name": "Python", "category": "programming", "aliases": ["python 3"]},
+    {"name": "FastAPI", "category": "backend", "aliases": ["fast api"]},
+    {"name": "Redis", "category": "database", "aliases": ["redis cache"]},
+    {"name": "SQL", "category": "data", "aliases": ["structured query language"]},
+    {"name": "PostgreSQL", "category": "database", "aliases": ["postgres", "postgresql database"]},
+    {"name": "JavaScript", "category": "programming", "aliases": ["js", "ecmascript"]},
+    {"name": "TypeScript", "category": "programming", "aliases": ["ts"]},
+    {"name": "React", "category": "frontend", "aliases": ["react.js", "reactjs"]},
+    {
+        "name": "Machine Learning",
+        "category": "machine_learning",
+        "aliases": ["ml", "machine-learning"],
+    },
+    {
+        "name": "Statistics and Probability",
+        "category": "mathematics",
+        "aliases": ["statistics", "probability"],
+    },
+    {"name": "PyTorch", "category": "machine_learning", "aliases": ["pytorch framework"]},
+    {"name": "TensorFlow", "category": "machine_learning", "aliases": ["tensorflow framework"]},
+    {"name": "Natural Language Processing", "category": "machine_learning", "aliases": ["nlp"]},
+    {
+        "name": "Data Structures and Algorithms",
+        "category": "computer_science",
+        "aliases": ["data structures", "algorithms", "dsa"],
+    },
+    {"name": "System Design", "category": "architecture", "aliases": ["systems design"]},
+    {
+        "name": "REST APIs",
+        "category": "backend",
+        "aliases": ["rest api", "restful api", "restful apis"],
+    },
+    {"name": "Docker", "category": "platform", "aliases": ["docker containers"]},
+    {"name": "Kubernetes", "category": "platform", "aliases": ["k8s"]},
+    {"name": "AWS", "category": "cloud", "aliases": ["amazon web services"]},
+    {"name": "Git", "category": "tools", "aliases": ["git version control"]},
+    {"name": "Testing", "category": "quality", "aliases": ["automated testing", "test automation"]},
+    {"name": "Data Modeling", "category": "data", "aliases": ["data modelling"]},
+    {"name": "Apache Kafka", "category": "data", "aliases": ["kafka"]},
+    {"name": "Operating Systems", "category": "systems", "aliases": ["operating system internals"]},
+    {"name": "Computer Networks", "category": "systems", "aliases": ["networking"]},
+    {
+        "name": "Application Security",
+        "category": "security",
+        "aliases": ["appsec", "application security testing"],
+    },
+    {"name": "Linux", "category": "systems", "aliases": ["gnu/linux"]},
+    {
+        "name": "CI/CD",
+        "category": "platform",
+        "aliases": ["continuous integration", "continuous delivery"],
+    },
+    {"name": "ETL", "category": "data", "aliases": ["extract transform load", "data pipelines"]},
+    {"name": "Excel", "category": "analytics", "aliases": ["microsoft excel", "spreadsheets"]},
+    {
+        "name": "Data Visualization",
+        "category": "analytics",
+        "aliases": ["data visualisation", "data viz"],
+    },
+    {
+        "name": "scikit-learn",
+        "category": "machine_learning",
+        "aliases": ["sklearn", "scikit learn"],
+    },
+    {"name": "Java", "category": "programming", "aliases": ["java 17", "java 21"]},
+    {"name": "C++", "category": "programming", "aliases": ["cplusplus"]},
+    {"name": "Cypress", "category": "quality", "aliases": ["cypress.io"]},
+    {"name": "Playwright", "category": "quality", "aliases": ["playwright testing"]},
+    {"name": "Threat Modeling", "category": "security", "aliases": ["threat modelling"]},
+    {"name": "Incident Response", "category": "security", "aliases": ["incident handling"]},
+]
+
+ROLE_FAMILIES = {
+    "backend": ["backend", "back-end", "api engineer", "server-side"],
+    "frontend": ["frontend", "front-end", "web developer", "ui engineer"],
+    "data_analyst": ["data analyst", "business intelligence", "bi analyst"],
+    "data_engineer": ["data engineer", "analytics engineer"],
+    "ml_engineer": ["machine learning engineer", "ml engineer", "ai/ml engineer", "ai engineer"],
+    "platform": ["platform engineer", "devops", "site reliability", "sre", "cloud engineer"],
+    "qa_automation": ["qa engineer", "quality assurance", "test automation", "automation engineer"],
+    "security": ["cybersecurity", "security analyst", "security engineer", "application security"],
+    "systems": ["systems engineer", "systems programming", "embedded engineer"],
+    "distributed": ["distributed systems", "infrastructure engineer"],
+}
+
+COMPETENCIES = {
+    "debugging": ["debug", "troubleshoot", "root cause", "incident"],
+    "communication": ["communicate", "stakeholder", "collaborate", "cross-functional"],
+    "reliability": ["reliability", "availability", "resilience", "production"],
+    "performance": ["performance", "latency", "throughput", "scale"],
+    "security": ["security", "threat", "authorization", "vulnerability"],
+    "testing": ["test", "quality", "validation", "regression"],
+    "analytics": ["analysis", "metric", "experiment", "insight"],
+}

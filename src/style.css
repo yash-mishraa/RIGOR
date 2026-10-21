@@ -75,6 +75,30 @@
       font-family: 'IBM Plex Sans', sans-serif;
     }
 
+    .job-import-card { display: flex; flex-direction: column; gap: 9px; padding: 14px; border: 1px solid var(--border-subtle); background: var(--bg-surface); }
+    .job-import-note, .job-import-status { color: var(--ink-secondary); font-size: 12px; }
+    .job-import-card label, .job-list-heading { font: 600 10px 'IBM Plex Mono', monospace; letter-spacing: .04em; }
+    .job-description-input { min-height: 150px; resize: vertical; padding: 9px; border: 1px solid var(--border-subtle); background: var(--bg-primary); color: var(--ink-primary); font: 12px 'IBM Plex Mono', monospace; }
+    .job-list-item, .job-analysis-card { display: flex; flex-direction: column; gap: 5px; padding: 10px 0; border-top: 1px solid var(--border-subtle); font-size: 12px; }
+    .job-analysis-card ol { padding-left: 20px; }
+    .job-analysis-card li { padding: 3px 0; }
+    #btn-import-job:disabled { opacity: .55; cursor: wait; }
+    .job-catalogue-controls { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+    .job-catalogue-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .job-catalogue-filters > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .job-catalogue-list { display: flex; flex-direction: column; gap: 6px; }
+    .job-list-button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 9px; text-align: left; border: 1px solid var(--border-subtle); background: var(--bg-primary); color: var(--ink-primary); cursor: pointer; }
+    .job-list-button:hover, .job-list-button:focus-visible { border-color: var(--accent-cobalt); outline: 2px solid var(--accent-cobalt); }
+    .job-list-button span { color: var(--ink-secondary); font-size: 11px; }
+    .job-pagination { display: flex; justify-content: space-between; }
+    .job-detail-block { display: flex; flex-direction: column; gap: 7px; padding: 10px 0; border-top: 1px solid var(--border-subtle); font-size: 12px; }
+    .coverage-meter { height: 7px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); }
+    .coverage-meter > span { display: block; height: 100%; background: var(--accent-forest); }
+    .recommendation-card { padding: 10px 0; border-top: 1px solid var(--border-subtle); }
+    .recommendation-card p, .recommendation-card li { font-size: 12px; }
+    .recommendation-card ul, .recommendation-card ol { padding-left: 18px; }
+    @media (max-width: 600px) { .job-catalogue-filters { grid-template-columns: 1fr; } }
+
     /* Architectural Drafting Layout */
     .workbench-shell {
       max-width: 1480px;
