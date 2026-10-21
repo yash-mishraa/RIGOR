@@ -121,27 +121,42 @@ def _list_section(description: str, heading_patterns: list[str]) -> list[str]:
 def analyze_job(title: str, description: str) -> dict:
     """Extract only taxonomy-backed evidence and plainly labeled description sections."""
     required, preferred, mentioned = [], [], []
-    lowered = description.lower()
     for skill in SKILL_TAXONOMY:
         matches = []
         for alias in sorted([skill["name"], *skill["aliases"]], key=len, reverse=True):
             matches.extend(_phrase_pattern(alias).finditer(description))
         if not matches:
             continue
-        match = min(matches, key=lambda item: item.start())
-        start = max(0, description.rfind("\n", 0, match.start()) + 1)
-        end = description.find("\n", match.end())
-        end = len(description) if end < 0 else end
-        evidence = normalize_text(description[start:end])
-        context = lowered[max(0, start - 120) : end]
-        if re.search(r"\b(preferred|nice to have|bonus|desirable)\b", context):
-            target = preferred
-        elif re.search(
-            r"\b(required|must[ -]have|minimum qualifications|basic qualifications)\b", context
-        ):
-            target = required
-        else:
-            target = mentioned
+        classified = []
+        for match in matches:
+            start = max(0, description.rfind("\n", 0, match.start()) + 1)
+            end = description.find("\n", match.end())
+            end = len(description) if end < 0 else end
+            evidence = normalize_text(description[start:end])
+            context = description[start:end]
+            previous_end = max(0, start - 1)
+            previous_start = max(0, description.rfind("\n", 0, previous_end) + 1)
+            previous_line = description[previous_start:previous_end].strip()
+            if re.fullmatch(
+                r"(?i)(required|preferred|nice to have|must[- ]have|minimum qualifications|basic qualifications)(?:\s+skills?)?\s*:?",
+                previous_line,
+            ):
+                context = previous_line + " " + context
+            if re.search(r"\b(preferred|nice to have|bonus|desirable)\b", context, re.IGNORECASE):
+                target = preferred
+                priority = 1
+            elif re.search(
+                r"\b(required|must[ -]have|minimum qualifications|basic qualifications)\b",
+                context,
+                re.IGNORECASE,
+            ):
+                target = required
+                priority = 2
+            else:
+                target = mentioned
+                priority = 0
+            classified.append((priority, match.start(), target, evidence))
+        _, _, target, evidence = max(classified, key=lambda item: (item[0], -item[1]))
         target.append({"name": skill["name"], "category": skill["category"], "evidence": evidence})
 
     responsibilities = _list_section(

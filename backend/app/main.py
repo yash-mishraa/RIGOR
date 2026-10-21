@@ -1,11 +1,20 @@
 import hashlib
-from collections import defaultdict
+import json
+import logging
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from uuid import UUID
+from pathlib import Path
+from time import monotonic
+from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import and_, case, delete, exists, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +23,7 @@ from sqlalchemy.orm import selectinload
 from app.ai import AIConfigurationError, AIProviderError, get_ai_provider
 from app.core.config import settings
 from app.core.database import SessionLocal, engine
+from app.core.observability import configure_privacy_logging, request_id_context
 from app.models import (
     CandidateResponse,
     Company,
@@ -64,6 +74,9 @@ from app.services import (
 )
 from app.taxonomy import SKILL_TAXONOMY
 
+logger = logging.getLogger("rigor.http")
+configure_privacy_logging()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -72,13 +85,139 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="RIGOR Interview Workbench API", version="3.0.0", lifespan=lifespan)
+
+
+class RequestGuardMiddleware:
+    def __init__(self, app, max_body_bytes: int):
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_id = str(uuid4())
+        request_context_token = request_id_context.set(request_id)
+        started = time.monotonic()
+        chunks = []
+        size = 0
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                request_id_context.reset(request_context_token)
+                return
+            if message["type"] != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > self.max_body_bytes:
+                body = json.dumps({"detail": "Request body is too large"}).encode()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 413,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode()),
+                            (b"x-request-id", request_id.encode()),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+                request_id_context.reset(request_context_token)
+                return
+            chunks.append(chunk)
+            more_body = message.get("more_body", False)
+        body = b"".join(chunks)
+        replayed = False
+
+        async def replay_receive():
+            nonlocal replayed
+            if replayed:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        status_code = 500
+
+        async def traced_send(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                message["headers"].append((b"x-request-id", request_id.encode()))
+            await send(message)
+
+        try:
+            await self.app(scope, replay_receive, traced_send)
+        except Exception as exc:
+            logger.error(
+                "request_failed",
+                extra={
+                    "request_id": request_id,
+                    "method": scope.get("method"),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            request_id_context.reset(request_context_token)
+            raise
+        route = scope.get("route")
+        logger.info(
+            "request_complete",
+            extra={
+                "request_id": request_id,
+                "endpoint": getattr(route, "path", "unmatched"),
+                "method": scope.get("method"),
+                "status_code": status_code,
+                "duration_ms": round((time.monotonic() - started) * 1000),
+            },
+        )
+        request_id_context.reset(request_context_token)
+
+
+app.add_middleware(RequestGuardMiddleware, max_body_bytes=settings.max_request_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    # Validation details can contain submitted values; return schema diagnostics only.
+    details = [
+        {key: error[key] for key in ("loc", "msg", "type") if key in error}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": details})
+
+
+_ai_request_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+def enforce_ai_rate_limit(request: Request) -> None:
+    if settings.ai_provider != "openai":
+        return
+    client_key = request.client.host if request.client else "unknown"
+    now = monotonic()
+    window = _ai_request_windows[client_key]
+    while window and window[0] <= now - 60:
+        window.popleft()
+    if len(window) >= settings.ai_requests_per_minute:
+        raise HTTPException(429, "AI request limit reached; try again later.")
+    window.append(now)
+    if len(_ai_request_windows) > 10_000:
+        stale = [
+            key
+            for key, events in _ai_request_windows.items()
+            if not events or events[-1] <= now - 60
+        ]
+        for key in stale:
+            _ai_request_windows.pop(key, None)
 
 
 async def session_dependency():
@@ -87,12 +226,56 @@ async def session_dependency():
 
 
 @app.get("/api/v1/health")
-async def health(session: AsyncSession = Depends(session_dependency)):
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/ready")
+async def readiness(session: AsyncSession = Depends(session_dependency)):
+    database, migrations = "ready", "unknown"
     try:
         await session.execute(select(1))
-        return {"status": "ok", "database": "ready"}
     except SQLAlchemyError:
-        return {"status": "ok", "database": "unavailable"}
+        database = "unavailable"
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "database": database,
+                "migrations": migrations,
+                "ai_provider": settings.ai_provider
+                if settings.ai_provider in {"none", "openai"}
+                else "misconfigured",
+                "ai_configuration": settings.ai_configuration_status,
+            },
+        )
+    try:
+        # Query alembic_version with textual SQL so readiness works independently of ORM metadata.
+        from sqlalchemy import text
+
+        current_revision = (
+            await session.execute(text("SELECT version_num FROM alembic_version"))
+        ).scalar_one_or_none()
+        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        script = ScriptDirectory.from_config(alembic_config)
+        migrations = "current" if current_revision == script.get_current_head() else "pending"
+    except SQLAlchemyError:
+        migrations = "pending"
+    except Exception:  # noqa: BLE001 - config failures should not leak readiness details.
+        migrations = "unknown"
+    status = "ready" if database == "ready" and migrations == "current" else "not_ready"
+    return JSONResponse(
+        status_code=200 if status == "ready" else 503,
+        content={
+            "status": status,
+            "database": database,
+            "migrations": migrations,
+            "ai_provider": settings.ai_provider
+            if settings.ai_provider in {"none", "openai"}
+            else "misconfigured",
+            "ai_configuration": settings.ai_configuration_status,
+        },
+    )
 
 
 @app.get("/api/v1/jobs", response_model=JobPage)
@@ -338,6 +521,7 @@ async def job_content_coverage(job_id: UUID, session: AsyncSession = Depends(ses
 @app.post("/api/v1/jobs/{job_id}/analyse")
 async def analyse(
     job_id: UUID,
+    request: Request,
     payload: AnalyseRequest | None = None,
     session: AsyncSession = Depends(session_dependency),
 ):
@@ -347,6 +531,7 @@ async def analyse(
     profile = analyze_job(job.role_title, job.description)
     ai_status = "not_requested"
     if payload and payload.use_ai:
+        enforce_ai_rate_limit(request)
         try:
             provider = get_ai_provider()
         except AIConfigurationError as exc:
@@ -367,6 +552,8 @@ async def analyse(
                 job.ai_analysis = semantic
                 job.ai_analysis_fingerprint = fingerprint
                 ai_status = "analyzed"
+            except AIConfigurationError as exc:
+                raise HTTPException(503, str(exc)) from exc
             except AIProviderError:
                 return {
                     "job_id": str(job.id),
@@ -522,7 +709,7 @@ async def get_question(question_id: UUID, session: AsyncSession = Depends(sessio
             selectinload(Question.skills).selectinload(QuestionSkill.skill),
             selectinload(Question.role_families),
         )
-        .where(Question.id == question_id)
+        .where(Question.id == question_id, Question.validation_status == "reviewed")
     )
     question = await session.scalar(query)
     if question is None:
@@ -1029,6 +1216,7 @@ async def resume_job_match(
 @app.post("/api/v1/jobs/{job_id}/generate-questions")
 async def generate_targeted_questions(
     job_id: UUID,
+    request: Request,
     payload: GenerateQuestionsRequest,
     session: AsyncSession = Depends(session_dependency),
 ):
@@ -1047,6 +1235,7 @@ async def generate_targeted_questions(
             "questions": [],
             "message": "Existing reviewed questions already cover the identified job skills.",
         }
+    enforce_ai_rate_limit(request)
     try:
         provider = get_ai_provider()
     except AIConfigurationError as exc:
@@ -1097,6 +1286,8 @@ async def generate_targeted_questions(
     context = f"Role: {job.role_title}; role family: {job.role_family}; responsibilities: {job.responsibilities or []}; description: {job.description[:4000]}; already available practice questions: {reusable_questions}; reusable learning modules: {reusable_modules}"
     try:
         output = await provider.generate_questions(context, gaps, limit)
+    except AIConfigurationError as exc:
+        raise HTTPException(503, str(exc)) from exc
     except AIProviderError as exc:
         raise HTTPException(
             502, "Question generation failed; existing preparation content remains available"
@@ -1111,8 +1302,13 @@ async def generate_targeted_questions(
     ).all():
         skill_by_alias[alias.casefold()] = skill_by_name[skill_name.casefold()]
     created = []
+    rejected_count = 0
     for candidate in output.questions[:limit]:
         if is_duplicate_question(candidate.question_text, existing_texts):
+            rejected_count += 1
+            continue
+        if any(name.casefold() not in skill_by_alias for name in candidate.skills):
+            rejected_count += 1
             continue
         names = list(
             dict.fromkeys(
@@ -1122,7 +1318,17 @@ async def generate_targeted_questions(
             )
         )
         primary = skill_by_alias.get(candidate.primary_skill.casefold())
-        if not primary or primary.name not in names or primary.name not in gaps:
+        if (
+            not primary
+            or primary.name not in names
+            or primary.name not in gaps
+            or not any(
+                alias.casefold() in candidate.question_text.casefold()
+                for alias, skill in skill_by_alias.items()
+                if skill.id == primary.id
+            )
+        ):
+            rejected_count += 1
             continue
         stable_key = (
             "ai-" + hashlib.sha256(candidate.question_text.casefold().encode()).hexdigest()[:40]
@@ -1149,18 +1355,28 @@ async def generate_targeted_questions(
         await session.flush()
         created.append(question)
         existing_texts.append(candidate.question_text)
+    run_status = "generated_pending_review" if created else "rejected_validation"
     run = ContentGenerationRun(
         content_type="targeted_questions",
         provider=provider.provider_name,
         model=provider.model_name,
         input_fingerprint=fingerprint,
-        status="generated_pending_review",
+        status=run_status,
         validation_metadata="\n".join(q.stable_key for q in created),
     )
     session.add(run)
     await session.commit()
+    logger.info(
+        "question_generation_complete",
+        extra={
+            "ai_provider": provider.provider_name,
+            "ai_model": provider.model_name,
+            "generation_accepted": len(created),
+            "generation_rejected": rejected_count,
+        },
+    )
     return {
-        "status": "generated_pending_review",
+        "status": run_status,
         "uncovered_skills": gaps,
         "questions": [
             {
@@ -1326,6 +1542,7 @@ async def next_practice_question(
 @app.post("/api/v1/practice-sessions/{session_id}/responses")
 async def submit_practice_response(
     session_id: UUID,
+    request: Request,
     payload: PracticeResponseCreate,
     session: AsyncSession = Depends(session_dependency),
 ):
@@ -1368,17 +1585,32 @@ async def submit_practice_response(
     evaluation = fallback_evaluate(expected, question.rubric, payload.answer)
     method = "deterministic_keyword_heuristic"
     if payload.allow_ai_evaluation:
+        enforce_ai_rate_limit(request)
         try:
             provider = get_ai_provider()
             ai_result = await provider.evaluate_answer(
                 question.question_text, question.rubric, payload.answer
             )
+            if any(
+                (item.assessment in {"demonstrated", "partial"} and not item.evidence.strip())
+                or (item.evidence and item.evidence.casefold() not in payload.answer.casefold())
+                for item in ai_result.criteria
+            ):
+                raise AIProviderError("AI evaluation evidence was not grounded in the answer")
             evaluation = ai_result.model_dump() | {"method": "ai_rubric", "approximate": True}
             method = "ai_rubric"
-        except (AIConfigurationError, AIProviderError):
+        except AIConfigurationError as exc:
+            if settings.ai_provider == "openai":
+                raise HTTPException(503, str(exc)) from exc
+            evaluation["provider_notice"] = "AI is disabled; the local rubric heuristic was used."
+        except AIProviderError:
             evaluation["provider_notice"] = (
                 "AI evaluation was unavailable; the local rubric heuristic was used."
             )
+    logger.info(
+        "answer_evaluation_complete",
+        extra={"evaluation_method": method, "evaluation_outcome": evaluation.get("outcome")},
+    )
     response_row = CandidateResponse(
         session_id=practice.id,
         question_id=question.id,

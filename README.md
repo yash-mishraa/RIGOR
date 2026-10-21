@@ -48,9 +48,9 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-`uv sync` creates the virtual environment and selects Python 3.12 or newer. Alternatively, create a Python 3.12+ virtual environment and run `pip install -e '.[dev]'`, then invoke `alembic` and `uvicorn` inside it. The API docs are at `http://127.0.0.1:8000/docs`; readiness is exposed at `/api/v1/health` (`status` describes app availability and `database` reports database connectivity).
+`uv sync` creates the virtual environment and selects Python 3.12 or newer. Alternatively, create a Python 3.12+ virtual environment and run `pip install -e '.[dev]'`, then invoke `alembic` and `uvicorn` inside it. The API docs are at `http://127.0.0.1:8000/docs`; `/api/v1/health` checks process health and `/api/v1/ready` checks database and migration readiness without calling OpenAI.
 
-AI stays disabled with the checked-in `.env.example`. To enable OpenAI, set `AI_PROVIDER=openai`, choose `AI_MODEL`, and set `OPENAI_API_KEY` in the private `backend/.env`; the key is only read by backend settings. No key is required for startup, tests, resume matching, catalogue browsing, or local practice. The configured adapter uses structured outputs, a 30-second timeout, one SDK retry, at most five generated questions per request, and a configurable 3,000-token output ceiling. Provider charges depend on the configured model and actual request usage; RIGOR does not currently expose token/cost telemetry, so consult the provider dashboard and cost controls.
+AI stays disabled with the checked-in `.env.example`. To enable OpenAI, set `AI_PROVIDER=openai`, choose `AI_MODEL`, and set `OPENAI_API_KEY` in the private backend environment; the key is only read by backend settings. No key is required for startup, tests, resume matching, catalogue browsing, or local practice. The adapter uses structured outputs, a 30-second timeout, zero SDK retries, at most five generated questions per request, a configurable 3,000-token output ceiling, and a local per-process limit of 10 AI requests per minute. Usage logs include token counts when the provider reports them. Optional input/output per-million-token rates can produce an explicitly estimated cost; the rates are operator supplied and must be checked against current pricing. Readiness reports configuration only and does not test provider connectivity.
 
 Seed reviewed questions, learning modules, canonical aliases, and role-skill mappings without adding fictional jobs:
 
@@ -68,13 +68,14 @@ This local database has 10 such demonstration listings. They are not live vacanc
 
 ## API slice
 
-- `GET /api/v1/health`
+- `GET /api/v1/health` (application process)
+- `GET /api/v1/ready` (database connection, migration head, and non-secret AI configuration status)
 - `GET /api/v1/jobs?q=python&role_family=backend&skill=Postgres&status=active&sort=relevance&limit=20&offset=0` (also filters seniority, location, and employment type)
 - `GET /api/v1/jobs/{job_id}`
 - `POST /api/v1/jobs/import` with `role_title`, `description` (80–30,000 chars), and optional company/location/seniority/employment type/source URL. URL/title/company duplicates are reused; changed content creates a new job version.
 - `GET /api/v1/jobs/{job_id}/skills`
 - `GET /api/v1/jobs/{job_id}/content-coverage`
-- `POST /api/v1/jobs/{job_id}/analyse` with `{"use_ai": true}` explicitly requests provider-assisted analysis; results are cached by job description version, provider, and model. A provider failure returns deterministic analysis.
+- `POST /api/v1/jobs/{job_id}/analyse` with `{"use_ai": true}` explicitly requests provider-assisted analysis; results are cached by job description version, provider, and model. Transient provider failures return deterministic analysis; provider authentication/model configuration errors return a clear 503.
 - `POST /api/v1/resumes/analyse` with `resume_text` returns transient structured evidence and does not persist the resume.
 - `POST /api/v1/resume-job-matches` with `job_id` and `resume_text` returns evidence-backed strengths, gaps, project connections, and study priorities; it does not call an external AI provider.
 - `POST /api/v1/jobs/{job_id}/generate-questions` with optional `max_questions` (1–5) generates only for uncovered skills. Drafts are duplicate-checked, cached, tagged `ai_generated`, and stay `generated_pending_review` until approved through `POST /api/v1/questions/{question_id}/review` with `{"decision":"approve"}` or rejected.
@@ -93,6 +94,8 @@ There is no authentication, tenant ownership, or authorization yet. Imported job
 
 The Vite frontend can be deployed to Vercel, but the FastAPI service and PostgreSQL must be hosted separately and `VITE_API_BASE_URL` set to that service. Because authentication and ownership controls are not yet implemented, keep this backend private/local; a public multi-user Vercel deployment is not ready.
 
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for controlled hosting, migration, health check, backup/rollback, and route ownership guidance. The image uses the committed `backend/uv.lock`; build it with `backend/` as the Docker context. Request bodies are capped at 200 KB by default. The per-process AI limiter is not a distributed public abuse control.
+
 ## Verification
 
 Run backend unit/API tests and formatting checks from `backend/`, plus the frontend production build from the repository root:
@@ -102,6 +105,26 @@ uv run pytest app/tests -q
 uv run ruff check app alembic
 npm run build
 ```
+
+Run the deterministic synthetic quality evaluation from `backend/`:
+
+```sh
+uv run python -m app.evaluations.run_quality --mode deterministic
+```
+
+Its fixture dataset and runner are under `backend/evaluations/` and `backend/app/evaluations/`. The OpenAI integration smoke test makes exactly one request and is skipped by default. Opt in explicitly only when prepared to incur a provider charge:
+
+```sh
+RIGOR_RUN_OPENAI_INTEGRATION=1 uv run pytest app/tests/test_openai_live.py -q -s
+```
+
+Model-dependent dataset evaluation is separate and makes three requests for each of five synthetic role cases. It is never part of default tests:
+
+```sh
+RIGOR_RUN_AI_EVALUATIONS=1 uv run python -m app.evaluations.run_quality --mode openai --output evaluation-result.json
+```
+
+That run records UTC timestamp, model, prompt-template and dataset versions, token configuration, request count, and aggregate/per-case metrics; it does not store secrets or source text. A result is evidence on this synthetic fixture only, not a production-quality guarantee.
 
 For the PostgreSQL integration test, point the test explicitly at a local test database whose contents may receive a temporary uniquely named job that the test deletes afterward:
 

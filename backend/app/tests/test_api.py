@@ -321,23 +321,20 @@ async def test_mock_provider_analysis_cache_and_targeted_generation(client, monk
 
         async def generate_questions(self, job_context, skill_names, limit):
             self.generation_calls += 1
-            return QuestionGenerationOutput(
-                questions=[
-                    GeneratedQuestion(
-                        question_text="How would you safely migrate a PostgreSQL schema while keeping a high-traffic API available?",
-                        question_type="scenario",
-                        difficulty="intermediate",
-                        primary_skill="PostgreSQL",
-                        skills=["PostgreSQL"],
-                        expected_points=[
-                            "Use backward-compatible schema changes",
-                            "Deploy in safe expand and contract steps",
-                        ],
-                        reference_answer="A safe migration starts with additive backward-compatible changes and deploys code that supports both schema versions before cleanup.",
-                        rubric="Look for compatibility, rollout safety, monitoring, and rollback planning.",
-                    )
-                ]
+            question = GeneratedQuestion(
+                question_text="How would you safely migrate a PostgreSQL schema while keeping a high-traffic API available?",
+                question_type="scenario",
+                difficulty="intermediate",
+                primary_skill="PostgreSQL",
+                skills=["PostgreSQL"],
+                expected_points=[
+                    "Use backward-compatible schema changes",
+                    "Deploy in safe expand and contract steps",
+                ],
+                reference_answer="A safe migration starts with additive backward-compatible changes and deploys code that supports both schema versions before cleanup.",
+                rubric="Look for compatibility, rollout safety, monitoring, and rollback planning.",
             )
+            return QuestionGenerationOutput(questions=[question, question.model_copy()])
 
     fake = FakeProvider()
     monkeypatch.setattr(api, "get_ai_provider", lambda: fake)
@@ -354,10 +351,12 @@ async def test_mock_provider_analysis_cache_and_targeted_generation(client, monk
     )
     assert generated.status_code == 200, generated.text
     assert generated.json()["status"] == "generated_pending_review"
+    assert len(generated.json()["questions"]) == 1
     assert generated.json()["questions"][0]["validation_status"] == "generated_pending_review"
     assert reused.json()["status"] == "reused_generated_content"
     assert fake.generation_calls == 1
     generated_id = generated.json()["questions"][0]["id"]
+    assert (await client.get(f"/api/v1/questions/{generated_id}")).status_code == 404
     reviewed = await client.post(
         f"/api/v1/questions/{generated_id}/review", json={"decision": "approve"}
     )
@@ -374,3 +373,49 @@ async def test_import_rejects_short_descriptions_and_bad_filters(client):
     assert response.status_code == 422
     bad_filter = await client.get("/api/v1/jobs", params={"status": "anything"})
     assert bad_filter.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_health_readiness_and_request_size_guard(client):
+    health = await client.get("/api/v1/health")
+    assert health.status_code == 200 and health.json() == {"status": "ok"}
+    assert health.headers.get("x-request-id")
+    ready = await client.get("/api/v1/ready")
+    assert ready.status_code == 503
+    assert ready.json()["database"] == "ready"
+    assert ready.json()["migrations"] == "pending"
+    assert ready.json()["ai_configuration"] in {"disabled", "configured", "misconfigured"}
+    preflight = await client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    oversized = await client.post(
+        "/api/v1/resumes/analyse",
+        content=b" " * 200_001,
+        headers={"content-type": "application/json"},
+    )
+    assert oversized.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_resume_content_is_not_logged_or_persisted(client, caplog):
+    sentinel = "PRIVATE_RESUME_SENTINEL_72b8"
+    response = await client.post(
+        "/api/v1/resumes/analyse",
+        json={"resume_text": f"Built Python services and tested APIs. {sentinel}"},
+    )
+    assert response.status_code == 200
+    assert sentinel not in caplog.text
+    assert response.json()["storage"] == "not_persisted"
+    assert (await client.get("/api/v1/health")).status_code == 200
+
+    malformed_sentinel = "SENSITIVE"
+    malformed = await client.post(
+        "/api/v1/resumes/analyse", json={"resume_text": malformed_sentinel}
+    )
+    assert malformed.status_code == 422
+    assert malformed_sentinel not in malformed.text

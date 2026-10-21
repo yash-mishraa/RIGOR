@@ -37,7 +37,9 @@ async def test_postgres_job_version_plan_and_cascade_cleanup():
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             health = await client.get("/api/v1/health")
-            assert health.status_code == 200 and health.json()["database"] == "ready"
+            readiness = await client.get("/api/v1/ready")
+            assert health.status_code == 200 and health.json()["status"] == "ok"
+            assert readiness.status_code == 200 and readiness.json()["database"] == "ready"
             imported = await client.post(
                 "/api/v1/jobs/import",
                 json={
