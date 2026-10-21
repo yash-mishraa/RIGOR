@@ -2382,6 +2382,9 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       const previous = document.getElementById("btn-jobs-prev");
       const next = document.getElementById("btn-jobs-next");
       const generatePlan = document.getElementById("btn-generate-plan");
+      const aiAnalysisButton = document.getElementById("btn-ai-job-analysis");
+      const resumeMatchButton = document.getElementById("btn-match-resume");
+      const questionGenerationButton = document.getElementById("btn-generate-questions");
       let pageOffset = 0;
       let pageLimit = 8;
       let selectedJobId = null;
@@ -2437,6 +2440,9 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           renderCoverage(coverage.coverage);
           status.textContent = `JOB PROFILE LOADED // CONTENT VERSION ${job.content_version}${job.is_demo ? " // DEMO DATA" : ""}`;
           generatePlan.disabled = false;
+          aiAnalysisButton.disabled = false;
+          resumeMatchButton.disabled = false;
+          questionGenerationButton.disabled = false;
         } catch (error) {
           status.textContent = `COULD NOT LOAD JOB: ${error.message}`;
         }
@@ -2480,7 +2486,60 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           return `<article class="recommendation-card plan-question-card" data-category="${escapeHtml(question.category || "")}" data-difficulty="${escapeHtml(question.difficulty || "")}"><div class="job-list-heading">${escapeHtml(question.primary_skill || question.category)} · ${escapeHtml(question.difficulty)} · MATCH ${question.relevance_score ?? "—"}</div><p>${escapeHtml(question.question)}</p><p><strong>Why selected:</strong> ${reasons}</p><button type="button" class="btn btn-sm practice-bank-question" data-question-key="${escapeHtml(question.stable_key)}">PRACTICE IN WORKBENCH</button></article>`;
         }).join("");
         const filters = questions.length ? `<div class="job-catalogue-filters"><div><label for="plan-question-search" class="font-mono-tech">FILTER QUESTIONS</label><input id="plan-question-search" class="select-field" placeholder="Question text or skill" /></div><div><label for="plan-question-category" class="font-mono-tech">CATEGORY</label><select id="plan-question-category" class="select-field"><option value="">All categories</option>${categoryOptions}</select></div><div><label for="plan-question-difficulty" class="font-mono-tech">DIFFICULTY</label><select id="plan-question-difficulty" class="select-field"><option value="">All levels</option><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></div></div>` : "";
-        result.innerHTML = `<div class="job-analysis-card"><div class="job-list-heading">PREPARATION PLAN // ${questions.length} QUESTIONS // ${modules.length} LEARNING MODULES</div><h4>Recommended learning</h4>${moduleCards || "<p>No reviewed learning modules currently match this job's skills.</p>"}<h4>Ranked practice questions</h4>${filters}${questionCards || "<p>No reviewed questions match the available job skills. See uncovered skills above.</p>"}</div>`;
+        result.innerHTML = `<div class="job-analysis-card"><div class="job-list-heading">PREPARATION PLAN // ${questions.length} QUESTIONS // ${modules.length} LEARNING MODULES</div><div class="practice-launcher"><label for="practice-mode-select">PRACTICE MODE</label><select class="select-field" id="practice-mode-select"><option value="guided_practice">Guided practice</option><option value="technical_mock">Technical mock interview</option><option value="resume_deep_dive">Resume deep dive</option><option value="behavioral">Behavioural interview</option></select><button type="button" class="btn btn-primary" id="btn-start-practice" ${questions.length ? "" : "disabled"}>START PERSISTED PRACTICE</button><button type="button" class="btn btn-sm" id="btn-resume-practice" hidden>RESUME SAVED SESSION</button><p class="job-import-note">Answers use a local heuristic by default. To request AI feedback, explicitly consent after a question is shown; the submitted answer is then sent to the configured provider.</p></div><div id="practice-session-panel" aria-live="polite"></div><h4>Recommended learning</h4>${moduleCards || "<p>No reviewed learning modules currently match this job's skills.</p>"}<h4>Ranked practice questions</h4>${filters}${questionCards || "<p>No reviewed questions match the available job skills. See uncovered skills above.</p>"}</div>`;
+        const savedSessionId = localStorage.getItem("rigor.activePracticeSession");
+        const resumeButton = document.getElementById("btn-resume-practice");
+        if (savedSessionId) {
+          resumeButton.hidden = false;
+          resumeButton.addEventListener("click", async () => {
+            try { renderPracticeSession(await rigorApi.getSession(savedSessionId)); }
+            catch (error) { resumeButton.hidden = true; document.getElementById("practice-session-panel").textContent = `Saved session unavailable: ${error.message}`; }
+          });
+        }
+        document.getElementById("btn-start-practice")?.addEventListener("click", async event => {
+          event.currentTarget.disabled = true;
+          try {
+            const practice = await rigorApi.startSession(plan.id, document.getElementById("practice-mode-select").value);
+            localStorage.setItem("rigor.activePracticeSession", practice.id);
+            renderPracticeSession(practice);
+          } catch (error) {
+            document.getElementById("practice-session-panel").textContent = error.message;
+            event.currentTarget.disabled = false;
+          }
+        });
+        function renderPracticeSession(practice, feedback = null) {
+          const panel = document.getElementById("practice-session-panel");
+          feedback = feedback || practice.last_feedback;
+          const question = practice.current_question;
+          const progress = `${practice.position} / ${practice.question_count} answered`;
+          let feedbackHtml = "";
+          if (feedback) {
+            const evaluation = feedback.evaluation || {};
+            feedbackHtml = `<div class="practice-feedback"><div class="job-list-heading">FEEDBACK // ${escapeHtml(evaluation.outcome || "saved")} · ${escapeHtml(feedback.evaluation_method || "local")}</div><p><strong>Strengths:</strong> ${(evaluation.strengths || []).map(escapeHtml).join(" · ") || "Keep building evidence in your answer."}</p><p><strong>Concepts to revisit:</strong> ${(evaluation.missing_concepts || []).map(escapeHtml).join(" · ") || "No gaps flagged."}</p><p><strong>Suggested improvement:</strong> ${(evaluation.suggested_improvements || []).map(escapeHtml).join(" · ") || "Continue with a concrete example."}</p><details><summary>Reference answer and key points</summary><p>${escapeHtml(feedback.reference_answer || "Reference answer is not available.")}</p></details></div>`;
+          }
+          if (!question) {
+            panel.innerHTML = `${feedbackHtml}<p class="job-list-heading">SESSION ${escapeHtml(practice.status.toUpperCase())} // ${progress}</p><button type="button" class="btn btn-sm" id="btn-session-results">REVIEW RESULTS &amp; WEAK SKILLS</button>`;
+            document.getElementById("btn-session-results").addEventListener("click", async () => {
+              const results = await rigorApi.sessionResults(practice.id);
+              panel.innerHTML = `<h4>Session results</h4><p>Weak-skill revision queue: ${results.weak_skills_revision_queue.map(escapeHtml).join(", ") || "No weak skills flagged"}</p>${results.responses.map(item => `<details><summary>${escapeHtml(item.question)}</summary><p>${escapeHtml(item.answer)}</p><p>${escapeHtml(item.evaluation?.outcome || "")}</p></details>`).join("")}`;
+            });
+            return;
+          }
+          panel.innerHTML = `${feedbackHtml}<div class="practice-question"><div class="job-list-heading">${escapeHtml(practice.mode.replaceAll("_", " ").toUpperCase())} // ${progress}</div><h4>${escapeHtml(question.primary_skill || question.category)} · ${escapeHtml(question.difficulty)}</h4><p>${escapeHtml(question.question)}</p>${question.reference_answer ? `<details><summary>Guided reference (visible in guided mode)</summary><p>${escapeHtml(question.reference_answer)}</p></details>` : ""}<label for="practice-answer-input">YOUR ANSWER</label><textarea class="job-description-input" id="practice-answer-input" maxlength="20000" rows="7" placeholder="Write your answer here…"></textarea><label class="ai-consent-label"><input type="checkbox" id="allow-ai-evaluation"> Send this answer to the configured external AI provider for rubric feedback</label><button type="button" class="btn btn-primary" id="btn-submit-practice-answer">SUBMIT ANSWER</button></div>`;
+          document.getElementById("btn-submit-practice-answer").addEventListener("click", async event => {
+            const answer = document.getElementById("practice-answer-input").value.trim();
+            if (!answer) { document.getElementById("practice-answer-input").focus(); return; }
+            event.currentTarget.disabled = true;
+            try {
+              const submitted = await rigorApi.answerSession(practice.id, answer, document.getElementById("allow-ai-evaluation").checked);
+              const response = await rigorApi.getSession(practice.id);
+              renderPracticeSession(response, { ...submitted, reference_answer: question.reference_answer });
+            } catch (error) {
+              panel.insertAdjacentHTML("beforeend", `<p class="job-import-note">Could not save answer: ${escapeHtml(error.message)}. Your text remains in the editor.</p>`);
+              event.currentTarget.disabled = false;
+            }
+          });
+        }
         const filterPlanQuestions = () => {
           const text = (document.getElementById("plan-question-search")?.value || "").toLowerCase();
           const category = document.getElementById("plan-question-category")?.value || "";
@@ -2500,6 +2559,53 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           if (question) button.addEventListener("click", () => addQuestionToWorkbench(question));
         });
       }
+
+      aiAnalysisButton.addEventListener("click", async () => {
+        if (!selectedJobId) return;
+        const report = document.getElementById("ai-job-analysis-report");
+        report.textContent = "Requesting structured analysis…";
+        aiAnalysisButton.disabled = true;
+        try {
+          const result = await rigorApi.analyseJob(selectedJobId, true);
+          const profile = result.analysis;
+          report.innerHTML = `<div class="job-detail-block"><div class="job-list-heading">AI ANALYSIS // ${escapeHtml(result.ai_status)}</div><p><strong>Responsibilities:</strong> ${(profile.responsibilities || []).map(escapeHtml).join(" · ") || "No additional supported responsibilities."}</p><p><strong>Required skills:</strong> ${(profile.required_skills || []).map(item => `${escapeHtml(item.name)} — “${escapeHtml(item.evidence)}”`).join(" · ") || "None"}</p><p><strong>Preferred skills:</strong> ${(profile.preferred_skills || []).map(item => `${escapeHtml(item.name)} — “${escapeHtml(item.evidence)}”`).join(" · ") || "None"}</p><p>Evidence-backed extraction only. Review before relying on it.</p></div>`;
+          renderCoverage(result.content_coverage);
+        } catch (error) { report.textContent = `AI analysis unavailable: ${error.message}. Deterministic job analysis remains available.`; }
+        finally { aiAnalysisButton.disabled = false; }
+      });
+      resumeMatchButton.addEventListener("click", async () => {
+        if (!selectedJobId) return;
+        const resume = document.getElementById("resume-raw-textarea").value.trim();
+        const report = document.getElementById("resume-job-match-report");
+        if (!resume) { report.textContent = "Paste or import a resume in the existing resume panel first."; return; }
+        report.textContent = "Matching evidence locally…";
+        resumeMatchButton.disabled = true;
+        try {
+          const result = await rigorApi.matchResume(selectedJobId, resume);
+          const match = result.match;
+          const demonstratedEvidence = result.profile.skills.filter(item => item.evidence_level === "demonstrated").map(item => `<li><strong>${escapeHtml(item.skill)}:</strong> ${item.evidence.map(escapeHtml).join(" · ")}</li>`).join("");
+          report.innerHTML = `<div class="job-detail-block"><div class="job-list-heading">RESUME MATCH // TRANSIENT ANALYSIS // NOT STORED</div><p><strong>Supported required skills:</strong> ${match.supported_required_skills.map(escapeHtml).join(", ") || "None found with action-oriented evidence"}</p><p><strong>Mentions needing stronger evidence:</strong> ${match.required_skills_with_mentions_only.map(escapeHtml).join(", ") || "None"}</p><p><strong>Required skills without resume evidence:</strong> ${match.required_skills_without_resume_evidence.map(escapeHtml).join(", ") || "None"}</p><p><strong>Study priority:</strong> ${escapeHtml(match.study_priorities.join(", ") || match.practice_priority)}</p><p><strong>Relevant projects:</strong> ${match.relevant_projects.map(project => `${escapeHtml(project.description)} (${project.job_requirements_connected.map(escapeHtml).join(", ")})`).join(" · ") || "No clearly labelled project matches found"}</p><p><strong>Project deep-dive prompts:</strong> ${match.potential_project_questions.map(escapeHtml).join(" · ") || "No project-specific prompts could be grounded in the extracted evidence"}</p><details><summary>Supporting resume evidence excerpts</summary><ul>${demonstratedEvidence || "<li>No action-oriented skill evidence was found.</li>"}</ul><p><strong>Education:</strong> ${(result.profile.education_evidence || []).map(escapeHtml).join(" · ") || "No education section detected"}</p><p><strong>Measured outcomes:</strong> ${(result.profile.measurable_achievements || []).map(escapeHtml).join(" · ") || "No measurable achievement line detected"}</p></details><p>${escapeHtml(match.evidence_caveat)}</p></div>`;
+        } catch (error) { report.textContent = `Local match failed: ${error.message}`; }
+        finally { resumeMatchButton.disabled = false; }
+      });
+      questionGenerationButton.addEventListener("click", async () => {
+        if (!selectedJobId) return;
+        const report = document.getElementById("generated-question-report");
+        report.textContent = "Checking question gaps and requesting a bounded batch…";
+        questionGenerationButton.disabled = true;
+        try {
+          const generated = await rigorApi.generateQuestions(selectedJobId, 3);
+          report.innerHTML = `<div class="job-detail-block"><div class="job-list-heading">${escapeHtml(generated.status.replaceAll("_", " ").toUpperCase())}</div><p>${escapeHtml(generated.message || "Generated questions are reusable but excluded from plans until reviewed.")}</p>${(generated.questions || []).map(question => `<details><summary>${escapeHtml(question.question)} · ${escapeHtml(question.validation_status || "")}</summary><p>${escapeHtml(question.reference_answer || "")}</p><p>${escapeHtml(question.rubric || "")}</p>${question.validation_status === "generated_pending_review" ? `<button type="button" class="btn btn-sm review-generated-question" data-question-id="${escapeHtml(question.id)}">APPROVE FOR REUSABLE PLANS</button>` : ""}</details>`).join("")}</div>`;
+          report.querySelectorAll(".review-generated-question").forEach(reviewButton => reviewButton.addEventListener("click", async () => {
+            reviewButton.disabled = true;
+            try {
+              await rigorApi.reviewGeneratedQuestion(reviewButton.dataset.questionId, "approve");
+              reviewButton.textContent = "APPROVED // REUSABLE";
+            } catch (error) { reviewButton.textContent = `REVIEW FAILED: ${error.message}`; reviewButton.disabled = false; }
+          }));
+        } catch (error) { report.textContent = `Question generation unavailable: ${error.message}. Existing reviewed content is unchanged.`; }
+        finally { questionGenerationButton.disabled = false; }
+      });
 
       try {
         const health = await rigorApi.health();

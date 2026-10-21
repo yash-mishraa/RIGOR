@@ -92,6 +92,10 @@
     .job-list-button span { color: var(--ink-secondary); font-size: 11px; }
     .job-pagination { display: flex; justify-content: space-between; }
     .job-detail-block { display: flex; flex-direction: column; gap: 7px; padding: 10px 0; border-top: 1px solid var(--border-subtle); font-size: 12px; }
+    .job-ai-actions, .practice-launcher, .practice-question, .practice-feedback { display: flex; flex-direction: column; gap: 8px; padding: 10px; margin: 8px 0; border: 1px solid var(--border-subtle); background: var(--bg-surface); }
+    .practice-question h4 { margin: 3px 0; }
+    .ai-consent-label { display: flex; align-items: flex-start; gap: 8px; color: var(--ink-secondary); font-size: 12px; }
+    .ai-consent-label input { margin-top: 2px; }
     .coverage-meter { height: 7px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); }
     .coverage-meter > span { display: block; height: 100%; background: var(--accent-forest); }
     .recommendation-card { padding: 10px 0; border-top: 1px solid var(--border-subtle); }

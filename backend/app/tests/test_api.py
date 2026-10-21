@@ -160,6 +160,213 @@ async def test_catalogue_filters_and_question_module_endpoints(client):
 
 
 @pytest.mark.asyncio
+async def test_resume_matching_is_transient_and_evidence_aware(client):
+    imported = await client.post(
+        "/api/v1/jobs/import",
+        json={
+            "role_title": "Backend Engineer",
+            "description": "Required skills: Python and PostgreSQL. Build reliable REST APIs with tests. "
+            * 3,
+        },
+    )
+    job_id = imported.json()["id"]
+    response = await client.post(
+        "/api/v1/resume-job-matches",
+        json={
+            "job_id": job_id,
+            "resume_text": "Experience\n- Built and maintained a Python REST API with tests, serving internal product traffic.\nProjects:\n- Developed a data service using Python and PostgreSQL to support reporting.",
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "Python" in payload["match"]["supported_required_skills"]
+    assert "PostgreSQL" in payload["match"]["supported_required_skills"]
+    assert payload["match"]["relevant_projects"]
+    assert payload["storage"] == "not_persisted"
+    assert "resume_text" not in payload
+    analysis = await client.post(
+        "/api/v1/resumes/analyse",
+        json={"resume_text": "Built a Python service with automated tests for a product team."},
+    )
+    assert analysis.status_code == 200 and analysis.json()["storage"] == "not_persisted"
+
+
+@pytest.mark.asyncio
+async def test_practice_session_persists_answers_hides_references_and_resumes(client):
+    imported = await client.post(
+        "/api/v1/jobs/import",
+        json={
+            "role_title": "Backend Engineer",
+            "description": "Required skills: Python and PostgreSQL. Build reliable REST APIs with tests. "
+            * 3,
+        },
+    )
+    plan = imported.json()["preparation_plan"]
+    started = await client.post(
+        "/api/v1/practice-sessions", json={"plan_id": plan["id"], "mode": "technical_mock"}
+    )
+    assert started.status_code == 201, started.text
+    state = started.json()
+    assert state["current_question"]
+    assert "reference_answer" not in state["current_question"]
+    resumed = await client.get(f"/api/v1/practice-sessions/{state['id']}")
+    assert resumed.status_code == 200 and resumed.json()["position"] == 0
+    response = await client.post(
+        f"/api/v1/practice-sessions/{state['id']}/responses",
+        json={
+            "answer": "Validate input and keep transaction boundaries short, with useful tests.",
+            "submission_key": "attempt-key-0001",
+            "allow_ai_evaluation": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["reference_answer"]
+    assert response.json()["evaluation_method"] == "deterministic_keyword_heuristic"
+    assert response.json()["evaluation"]["provider_notice"]
+    assert response.json()["session"]["position"] == 1
+    resumed_after_answer = await client.get(f"/api/v1/practice-sessions/{state['id']}")
+    assert resumed_after_answer.json()["last_feedback"]["reference_answer"]
+    replay = await client.post(
+        f"/api/v1/practice-sessions/{state['id']}/responses",
+        json={"answer": "same request", "submission_key": "attempt-key-0001"},
+    )
+    assert replay.status_code == 200 and replay.json()["status"] == "duplicate_submission"
+    results = await client.get(f"/api/v1/practice-sessions/{state['id']}/results")
+    assert results.status_code == 200 and len(results.json()["responses"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_ai_job_analysis_requires_explicit_provider_configuration(client):
+    imported = await client.post(
+        "/api/v1/jobs/import",
+        json={
+            "role_title": "Backend Engineer",
+            "description": "Required Python skills with PostgreSQL and API testing. " * 4,
+        },
+    )
+    response = await client.post(
+        f"/api/v1/jobs/{imported.json()['id']}/analyse", json={"use_ai": True}
+    )
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_ai_job_analysis_provider_failure_returns_deterministic_fallback(client, monkeypatch):
+    from app import main as api
+    from app.ai import AIProviderError
+
+    imported = await client.post(
+        "/api/v1/jobs/import",
+        json={
+            "role_title": "Backend Engineer",
+            "description": "Required skills: Python and PostgreSQL. Build and test reliable APIs. "
+            * 3,
+        },
+    )
+
+    class BrokenProvider:
+        provider_name = "mock"
+        model_name = "fixture"
+
+        async def analyze_job(self, description, canonical_skills):
+            raise AIProviderError("provider unavailable")
+
+    monkeypatch.setattr(api, "get_ai_provider", lambda: BrokenProvider())
+    response = await client.post(
+        f"/api/v1/jobs/{imported.json()['id']}/analyse", json={"use_ai": True}
+    )
+    assert response.status_code == 200
+    assert response.json()["ai_status"] == "failed_deterministic_fallback"
+    assert "Python" in {row["name"] for row in response.json()["analysis"]["required_skills"]}
+
+
+@pytest.mark.asyncio
+async def test_mock_provider_analysis_cache_and_targeted_generation(client, monkeypatch):
+    from app import main as api
+    from app.ai import (
+        EvidenceStatement,
+        GeneratedQuestion,
+        JobAnalysisOutput,
+        QuestionGenerationOutput,
+        SkillEvidence,
+    )
+
+    imported = await client.post(
+        "/api/v1/jobs/import",
+        json={
+            "role_title": "Backend Engineer",
+            "description": "Required skills: PostgreSQL and Kubernetes. Build API services with reliable debugging and testing. "
+            * 3,
+        },
+    )
+    job_id = imported.json()["id"]
+
+    class FakeProvider:
+        provider_name = "mock"
+        model_name = "fixture-v1"
+        analysis_calls = 0
+        generation_calls = 0
+
+        async def analyze_job(self, description, canonical_skills):
+            self.analysis_calls += 1
+            return JobAnalysisOutput(
+                responsibilities=[
+                    EvidenceStatement(statement="Build API services", evidence="Build API services")
+                ],
+                competencies=[EvidenceStatement(statement="debugging", evidence="debugging")],
+                required_skills=[
+                    SkillEvidence(name="PostgreSQL", evidence="Required skills: PostgreSQL")
+                ],
+            )
+
+        async def generate_questions(self, job_context, skill_names, limit):
+            self.generation_calls += 1
+            return QuestionGenerationOutput(
+                questions=[
+                    GeneratedQuestion(
+                        question_text="How would you safely migrate a PostgreSQL schema while keeping a high-traffic API available?",
+                        question_type="scenario",
+                        difficulty="intermediate",
+                        primary_skill="PostgreSQL",
+                        skills=["PostgreSQL"],
+                        expected_points=[
+                            "Use backward-compatible schema changes",
+                            "Deploy in safe expand and contract steps",
+                        ],
+                        reference_answer="A safe migration starts with additive backward-compatible changes and deploys code that supports both schema versions before cleanup.",
+                        rubric="Look for compatibility, rollout safety, monitoring, and rollback planning.",
+                    )
+                ]
+            )
+
+    fake = FakeProvider()
+    monkeypatch.setattr(api, "get_ai_provider", lambda: fake)
+    first = await client.post(f"/api/v1/jobs/{job_id}/analyse", json={"use_ai": True})
+    second = await client.post(f"/api/v1/jobs/{job_id}/analyse", json={"use_ai": True})
+    assert first.status_code == 200 and first.json()["ai_status"] == "analyzed"
+    assert second.status_code == 200 and second.json()["ai_status"] == "cached"
+    assert fake.analysis_calls == 1
+    generated = await client.post(
+        f"/api/v1/jobs/{job_id}/generate-questions", json={"max_questions": 1}
+    )
+    reused = await client.post(
+        f"/api/v1/jobs/{job_id}/generate-questions", json={"max_questions": 1}
+    )
+    assert generated.status_code == 200, generated.text
+    assert generated.json()["status"] == "generated_pending_review"
+    assert generated.json()["questions"][0]["validation_status"] == "generated_pending_review"
+    assert reused.json()["status"] == "reused_generated_content"
+    assert fake.generation_calls == 1
+    generated_id = generated.json()["questions"][0]["id"]
+    reviewed = await client.post(
+        f"/api/v1/questions/{generated_id}/review", json={"decision": "approve"}
+    )
+    assert reviewed.status_code == 200 and reviewed.json()["validation_status"] == "reviewed"
+    question_detail = await client.get(f"/api/v1/questions/{generated_id}")
+    assert question_detail.json()["provenance"] == "ai_generated"
+
+
+@pytest.mark.asyncio
 async def test_import_rejects_short_descriptions_and_bad_filters(client):
     response = await client.post(
         "/api/v1/jobs/import", json={"role_title": "Engineer", "description": "Too short"}

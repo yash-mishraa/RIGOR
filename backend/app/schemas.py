@@ -89,3 +89,34 @@ class JobPage(BaseModel):
     limit: int
     offset: int
     next_offset: int | None
+
+
+class AnalyseRequest(BaseModel):
+    use_ai: bool = False
+
+
+class ResumeAnalysisRequest(BaseModel):
+    resume_text: str = Field(min_length=20, max_length=100000)
+
+
+class ResumeJobMatchRequest(ResumeAnalysisRequest):
+    job_id: UUID
+
+
+class GenerateQuestionsRequest(BaseModel):
+    max_questions: int = Field(default=3, ge=1, le=5)
+
+
+class QuestionReviewRequest(BaseModel):
+    decision: str = Field(pattern=r"^(approve|reject)$")
+
+
+class PracticeSessionCreate(BaseModel):
+    plan_id: UUID
+    mode: str = Field(pattern=r"^(guided_practice|technical_mock|resume_deep_dive|behavioral)$")
+
+
+class PracticeResponseCreate(BaseModel):
+    answer: str = Field(min_length=1, max_length=20000)
+    allow_ai_evaluation: bool = False
+    submission_key: str | None = Field(default=None, min_length=8, max_length=80)

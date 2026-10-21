@@ -172,6 +172,15 @@
                 <div id="job-import-status" class="job-import-status" aria-live="polite">Checking backend connection…</div>
                 <div id="job-selected-details"></div>
                 <div id="job-content-coverage"></div>
+                <div class="job-ai-actions" aria-label="Personalisation actions">
+                  <p class="job-import-note">Resume matching sends resume text to the configured RIGOR backend for transient processing; it is not saved or sent to an external AI provider. AI job analysis and question generation send selected job context to the configured provider.</p>
+                  <button type="button" class="btn btn-sm" id="btn-ai-job-analysis" disabled>AI-ASSISTED JOB ANALYSIS</button>
+                  <button type="button" class="btn btn-sm" id="btn-match-resume" disabled>MATCH LOCAL RESUME</button>
+                  <button type="button" class="btn btn-sm" id="btn-generate-questions" disabled>GENERATE UP TO 3 GAP QUESTIONS</button>
+                  <div id="resume-job-match-report" aria-live="polite"></div>
+                  <div id="ai-job-analysis-report" aria-live="polite"></div>
+                  <div id="generated-question-report" aria-live="polite"></div>
+                </div>
                 <button type="button" class="btn" id="btn-generate-plan" disabled>BUILD PREPARATION PLAN</button>
                 <div id="job-preparation-results"></div>
               </section>

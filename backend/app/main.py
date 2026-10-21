@@ -1,3 +1,4 @@
+import hashlib
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -10,16 +11,20 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.ai import AIConfigurationError, AIProviderError, get_ai_provider
 from app.core.config import settings
 from app.core.database import SessionLocal, engine
 from app.models import (
+    CandidateResponse,
     Company,
+    ContentGenerationRun,
     JobPost,
     JobPostVersion,
     JobSkill,
     LearningModule,
     LearningModuleSkill,
     PlanItem,
+    PracticeSession,
     PreparationPlan,
     Question,
     QuestionRoleFamily,
@@ -27,7 +32,25 @@ from app.models import (
     Skill,
     SkillAlias,
 )
-from app.schemas import JobImport, JobPage, PlanCreate
+from app.personalization import (
+    extract_resume_evidence,
+    fallback_evaluate,
+    is_duplicate_question,
+    match_resume_to_job,
+    reorder_adaptive_queue,
+)
+from app.schemas import (
+    AnalyseRequest,
+    GenerateQuestionsRequest,
+    JobImport,
+    JobPage,
+    PlanCreate,
+    PracticeResponseCreate,
+    PracticeSessionCreate,
+    QuestionReviewRequest,
+    ResumeAnalysisRequest,
+    ResumeJobMatchRequest,
+)
 from app.services import (
     RankingWeights,
     analyze_job,
@@ -39,6 +62,7 @@ from app.services import (
     rank_question,
     select_balanced_questions,
 )
+from app.taxonomy import SKILL_TAXONOMY
 
 
 @asynccontextmanager
@@ -47,7 +71,7 @@ async def lifespan(_: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="RIGOR Interview Workbench API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="RIGOR Interview Workbench API", version="3.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -312,14 +336,114 @@ async def job_content_coverage(job_id: UUID, session: AsyncSession = Depends(ses
 
 
 @app.post("/api/v1/jobs/{job_id}/analyse")
-async def analyse(job_id: UUID, session: AsyncSession = Depends(session_dependency)):
+async def analyse(
+    job_id: UUID,
+    payload: AnalyseRequest | None = None,
+    session: AsyncSession = Depends(session_dependency),
+):
     job = await session.get(JobPost, job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
     profile = analyze_job(job.role_title, job.description)
+    ai_status = "not_requested"
+    if payload and payload.use_ai:
+        try:
+            provider = get_ai_provider()
+        except AIConfigurationError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        fingerprint = hashlib.sha256(
+            f"job-analysis-v1:{job.content_version}:{description_hash(job.description)}:{provider.provider_name}:{provider.model_name}".encode()
+        ).hexdigest()
+        if job.ai_analysis_fingerprint == fingerprint and job.ai_analysis:
+            semantic = job.ai_analysis
+            ai_status = "cached"
+        else:
+            try:
+                output = await provider.analyze_job(
+                    job.description, [item["name"] for item in SKILL_TAXONOMY]
+                )
+                semantic = output.model_dump()
+                semantic["analysis_version"] = 1
+                job.ai_analysis = semantic
+                job.ai_analysis_fingerprint = fingerprint
+                ai_status = "analyzed"
+            except AIProviderError:
+                return {
+                    "job_id": str(job.id),
+                    "analysis": profile,
+                    "ai_status": "failed_deterministic_fallback",
+                    "ai_message": "AI analysis failed. The deterministic profile is returned unchanged.",
+                    "content_coverage": (await rank_job_content(session, job))["coverage"],
+                }
+        canonical = {
+            alias.casefold(): item["name"]
+            for item in SKILL_TAXONOMY
+            for alias in [item["name"], *item["aliases"]]
+        }
+        merged = {
+            item["name"].casefold(): item
+            for item in profile["required_skills"]
+            + profile["preferred_skills"]
+            + profile["mentioned_skills"]
+        }
+        ai_required, ai_preferred = set(), set()
+        for requirement in ("required_skills", "preferred_skills"):
+            for candidate in semantic[requirement]:
+                name = canonical.get(candidate["name"].casefold())
+                evidence = candidate["evidence"].strip()
+                if name and evidence and evidence.casefold() in job.description.casefold():
+                    merged[name.casefold()] = {
+                        "name": name,
+                        "category": next(
+                            x["category"] for x in SKILL_TAXONOMY if x["name"] == name
+                        ),
+                        "evidence": evidence,
+                    }
+                    (ai_required if requirement == "required_skills" else ai_preferred).add(name)
+        required_names = {item["name"] for item in profile["required_skills"]} | ai_required
+        preferred_names = (
+            {item["name"] for item in profile["preferred_skills"]} | ai_preferred
+        ) - required_names
+        profile["required_skills"] = [merged[name.casefold()] for name in sorted(required_names)]
+        profile["preferred_skills"] = [merged[name.casefold()] for name in sorted(preferred_names)]
+        profile["mentioned_skills"] = [
+            item
+            for item in profile["mentioned_skills"]
+            if item["name"] not in required_names | preferred_names
+        ]
+        canonical_competencies = {
+            "debugging",
+            "communication",
+            "reliability",
+            "performance",
+            "security",
+            "testing",
+            "analytics",
+        }
+        supported_competencies = {
+            item["statement"].casefold()
+            for item in semantic["competencies"]
+            if item["statement"].casefold() in canonical_competencies
+            and item["evidence"].casefold() in job.description.casefold()
+        }
+        profile["competencies"] = sorted(
+            set(profile.get("competencies", [])) | supported_competencies
+        )
+        supported_responsibilities = [
+            item["statement"]
+            for item in semantic["responsibilities"]
+            if item["evidence"].casefold() in job.description.casefold()
+        ]
+        profile["responsibilities"] = list(
+            dict.fromkeys(profile.get("responsibilities", []) + supported_responsibilities)
+        )[:30]
+        await session.execute(delete(JobSkill).where(JobSkill.job_id == job.id))
+        await save_job_skills(session, job, profile)
+        await session.commit()
     return {
         "job_id": str(job.id),
         "analysis": profile,
+        "ai_status": ai_status,
         "content_coverage": (await rank_job_content(session, job))["coverage"],
     }
 
@@ -404,6 +528,31 @@ async def get_question(question_id: UUID, session: AsyncSession = Depends(sessio
     if question is None:
         raise HTTPException(404, "Question not found")
     return question_payload(question)
+
+
+@app.post("/api/v1/questions/{question_id}/review")
+async def review_generated_question(
+    question_id: UUID,
+    payload: QuestionReviewRequest,
+    session: AsyncSession = Depends(session_dependency),
+):
+    question = await session.get(Question, question_id)
+    if question is None:
+        raise HTTPException(404, "Question not found")
+    if (
+        question.provenance != "ai_generated"
+        or question.validation_status != "generated_pending_review"
+    ):
+        raise HTTPException(
+            409, "Only generated questions pending review can be approved or rejected"
+        )
+    question.validation_status = "reviewed" if payload.decision == "approve" else "rejected"
+    await session.commit()
+    return {
+        "question_id": str(question.id),
+        "provenance": question.provenance,
+        "validation_status": question.validation_status,
+    }
 
 
 @app.get("/api/v1/learning-modules")
@@ -844,4 +993,493 @@ async def plan_payload_for(session: AsyncSession, plan: PreparationPlan, job: Jo
         "learning_modules": learning_modules,
         "questions": question_items,
         "content_coverage": coverage,
+    }
+
+
+@app.post("/api/v1/resumes/analyse")
+async def analyse_resume(payload: ResumeAnalysisRequest):
+    # Resume text is processed transiently and is never stored or logged.
+    return {
+        "profile": extract_resume_evidence(payload.resume_text),
+        "storage": "not_persisted",
+        "processing": "backend_local",
+    }
+
+
+@app.post("/api/v1/resume-job-matches")
+async def resume_job_match(
+    payload: ResumeJobMatchRequest, session: AsyncSession = Depends(session_dependency)
+):
+    job = await session.get(JobPost, payload.job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    rows = await job_skill_rows(session, job.id)
+    required = [row.skill.name for row in rows if row.requirement_type == "required"]
+    preferred = [row.skill.name for row in rows if row.requirement_type == "preferred"]
+    profile = extract_resume_evidence(payload.resume_text)
+    return {
+        "job_id": str(job.id),
+        "profile": profile,
+        "match": match_resume_to_job(profile, required, preferred),
+        "storage": "not_persisted",
+        "external_ai_used": False,
+    }
+
+
+@app.post("/api/v1/jobs/{job_id}/generate-questions")
+async def generate_targeted_questions(
+    job_id: UUID,
+    payload: GenerateQuestionsRequest,
+    session: AsyncSession = Depends(session_dependency),
+):
+    job = await session.get(JobPost, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    analysis = await rank_job_content(session, job)
+    coverage = analysis["coverage"]
+    gaps = (
+        coverage["required_skills_without_questions"]
+        or coverage["preferred_skills_without_questions"]
+    )
+    if not gaps:
+        return {
+            "status": "no_content_gap",
+            "questions": [],
+            "message": "Existing reviewed questions already cover the identified job skills.",
+        }
+    try:
+        provider = get_ai_provider()
+    except AIConfigurationError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    limit = min(payload.max_questions, settings.ai_max_generation_batch, 5)
+    fingerprint = hashlib.sha256(
+        f"question-generation-v1:{job.content_version}:{provider.provider_name}:{provider.model_name}:{','.join(sorted(gaps))}:{limit}".encode()
+    ).hexdigest()
+    cached_run = await session.scalar(
+        select(ContentGenerationRun)
+        .where(
+            ContentGenerationRun.input_fingerprint == fingerprint,
+            ContentGenerationRun.content_type == "targeted_questions",
+            ContentGenerationRun.status == "generated_pending_review",
+        )
+        .order_by(ContentGenerationRun.created_at.desc())
+    )
+    if cached_run:
+        keys = [value for value in cached_run.validation_metadata.splitlines() if value]
+        cached = (
+            (await session.scalars(select(Question).where(Question.stable_key.in_(keys)))).all()
+            if keys
+            else []
+        )
+        return {
+            "status": "reused_generated_content",
+            "questions": [
+                {
+                    "id": str(q.id),
+                    "stable_key": q.stable_key,
+                    "question": q.question_text,
+                    "validation_status": q.validation_status,
+                    "provenance": q.provenance,
+                }
+                for q in cached
+            ],
+            "uncovered_skills": gaps,
+        }
+    existing_texts = list((await session.scalars(select(Question.question_text))).all())
+    reusable_questions = [
+        {"question": item["question"], "skills": item["skills"], "category": item["category"]}
+        for item in analysis["questions"][:8]
+    ]
+    reusable_modules = [
+        {"title": item["title"], "skills": item["skills"], "summary": item["purpose"]}
+        for item in analysis["learning_modules"][:6]
+    ]
+    context = f"Role: {job.role_title}; role family: {job.role_family}; responsibilities: {job.responsibilities or []}; description: {job.description[:4000]}; already available practice questions: {reusable_questions}; reusable learning modules: {reusable_modules}"
+    try:
+        output = await provider.generate_questions(context, gaps, limit)
+    except AIProviderError as exc:
+        raise HTTPException(
+            502, "Question generation failed; existing preparation content remains available"
+        ) from exc
+    skill_rows = (await session.scalars(select(Skill))).all()
+    skill_by_name = {row.name.casefold(): row for row in skill_rows}
+    skill_by_alias = dict(skill_by_name)
+    for alias, skill_name in (
+        await session.execute(
+            select(SkillAlias.alias, Skill.name).join(Skill, Skill.id == SkillAlias.skill_id)
+        )
+    ).all():
+        skill_by_alias[alias.casefold()] = skill_by_name[skill_name.casefold()]
+    created = []
+    for candidate in output.questions[:limit]:
+        if is_duplicate_question(candidate.question_text, existing_texts):
+            continue
+        names = list(
+            dict.fromkeys(
+                skill_by_alias[name.casefold()].name
+                for name in candidate.skills
+                if name.casefold() in skill_by_alias
+            )
+        )
+        primary = skill_by_alias.get(candidate.primary_skill.casefold())
+        if not primary or primary.name not in names or primary.name not in gaps:
+            continue
+        stable_key = (
+            "ai-" + hashlib.sha256(candidate.question_text.casefold().encode()).hexdigest()[:40]
+        )
+        question = Question(
+            stable_key=stable_key,
+            question_text=candidate.question_text,
+            question_type=candidate.question_type,
+            difficulty=candidate.difficulty,
+            role_family=job.role_family,
+            category="ai_targeted_practice",
+            primary_skill_id=primary.id,
+            expected_points="\n".join(candidate.expected_points),
+            reference_answer=candidate.reference_answer,
+            common_mistakes=[],
+            rubric=candidate.rubric,
+            provenance="ai_generated",
+            validation_status="generated_pending_review",
+            version=1,
+        )
+        question.skills = [QuestionSkill(skill=skill_by_name[name.casefold()]) for name in names]
+        question.role_families = [QuestionRoleFamily(role_family=job.role_family)]
+        session.add(question)
+        await session.flush()
+        created.append(question)
+        existing_texts.append(candidate.question_text)
+    run = ContentGenerationRun(
+        content_type="targeted_questions",
+        provider=provider.provider_name,
+        model=provider.model_name,
+        input_fingerprint=fingerprint,
+        status="generated_pending_review",
+        validation_metadata="\n".join(q.stable_key for q in created),
+    )
+    session.add(run)
+    await session.commit()
+    return {
+        "status": "generated_pending_review",
+        "uncovered_skills": gaps,
+        "questions": [
+            {
+                "id": str(q.id),
+                "stable_key": q.stable_key,
+                "question": q.question_text,
+                "difficulty": q.difficulty,
+                "skills": [row.skill.name for row in q.skills],
+                "reference_answer": q.reference_answer,
+                "rubric": q.rubric,
+                "provenance": q.provenance,
+                "validation_status": q.validation_status,
+                "model": provider.model_name,
+            }
+            for q in created
+        ],
+    }
+
+
+def _session_question(question: Question, mode: str):
+    query = question_payload(question)
+    if mode != "guided_practice":
+        query.pop("reference_answer", None)
+        query.pop("expected_points", None)
+    return query
+
+
+async def _session_payload(session: AsyncSession, practice: PracticeSession):
+    queue = practice.question_queue or []
+    current = None
+    if practice.status == "in_progress" and practice.current_position < len(queue):
+        qid = UUID(queue[practice.current_position])
+        question = await session.scalar(
+            select(Question)
+            .options(
+                selectinload(Question.skills).selectinload(QuestionSkill.skill),
+                selectinload(Question.role_families),
+            )
+            .where(Question.id == qid)
+        )
+        if question:
+            current = _session_question(question, practice.mode)
+    last_feedback = None
+    if practice.current_position > 0:
+        response_row = await session.scalar(
+            select(CandidateResponse)
+            .where(CandidateResponse.session_id == practice.id)
+            .order_by(CandidateResponse.created_at.desc())
+            .limit(1)
+        )
+        if response_row:
+            answered_question = await session.get(Question, response_row.question_id)
+            last_feedback = {
+                "evaluation": response_row.evaluation or {},
+                "evaluation_method": response_row.evaluation_method,
+                "reference_answer": answered_question.reference_answer
+                if answered_question
+                else None,
+            }
+    return {
+        "id": str(practice.id),
+        "plan_id": str(practice.plan_id),
+        "mode": practice.mode,
+        "status": practice.status,
+        "position": practice.current_position,
+        "question_count": len(queue),
+        "current_question": current,
+        "last_feedback": last_feedback,
+        "started_at": practice.started_at.isoformat() if practice.started_at else None,
+        "completed_at": practice.completed_at.isoformat() if practice.completed_at else None,
+        "resume_notice": "Assessment modes hide reference answers until submission.",
+    }
+
+
+@app.post("/api/v1/practice-sessions", status_code=201)
+async def start_practice_session(
+    payload: PracticeSessionCreate, session: AsyncSession = Depends(session_dependency)
+):
+    plan = await session.get(PreparationPlan, payload.plan_id)
+    if plan is None:
+        raise HTTPException(404, "Preparation plan not found")
+    items = (
+        await session.scalars(
+            select(PlanItem)
+            .where(
+                PlanItem.plan_id == plan.id,
+                PlanItem.item_type == "question",
+                PlanItem.question_id.is_not(None),
+            )
+            .order_by(PlanItem.position)
+        )
+    ).all()
+    qids = [str(item.question_id) for item in items]
+    if payload.mode == "behavioral":
+        questions = (
+            (
+                await session.scalars(
+                    select(Question).where(Question.id.in_([UUID(qid) for qid in qids]))
+                )
+            ).all()
+            if qids
+            else []
+        )
+        behavioral_ids = {
+            str(q.id)
+            for q in questions
+            if q.question_type == "behavioral" or (q.category or "").startswith("behavioral")
+        }
+        qids = [qid for qid in qids if qid in behavioral_ids]
+    elif payload.mode == "technical_mock":
+        questions = (
+            (
+                await session.scalars(
+                    select(Question).where(Question.id.in_([UUID(qid) for qid in qids]))
+                )
+            ).all()
+            if qids
+            else []
+        )
+        non_behavioral = {
+            str(q.id)
+            for q in questions
+            if q.question_type != "behavioral" and not (q.category or "").startswith("behavioral")
+        }
+        qids = [qid for qid in qids if qid in non_behavioral]
+    if not qids:
+        raise HTTPException(
+            422, "This preparation plan has no questions for the selected practice mode"
+        )
+    practice = PracticeSession(
+        plan_id=plan.id,
+        mode=payload.mode,
+        question_queue=qids,
+        current_position=0,
+        status="in_progress",
+    )
+    session.add(practice)
+    await session.commit()
+    await session.refresh(practice)
+    return await _session_payload(session, practice)
+
+
+@app.get("/api/v1/practice-sessions/{session_id}")
+async def get_practice_session(
+    session_id: UUID, session: AsyncSession = Depends(session_dependency)
+):
+    practice = await session.get(PracticeSession, session_id)
+    if practice is None:
+        raise HTTPException(404, "Practice session not found")
+    return await _session_payload(session, practice)
+
+
+@app.post("/api/v1/practice-sessions/{session_id}/next")
+async def next_practice_question(
+    session_id: UUID, session: AsyncSession = Depends(session_dependency)
+):
+    practice = await session.get(PracticeSession, session_id)
+    if practice is None:
+        raise HTTPException(404, "Practice session not found")
+    return await _session_payload(session, practice)
+
+
+@app.post("/api/v1/practice-sessions/{session_id}/responses")
+async def submit_practice_response(
+    session_id: UUID,
+    payload: PracticeResponseCreate,
+    session: AsyncSession = Depends(session_dependency),
+):
+    practice = await session.scalar(
+        select(PracticeSession).where(PracticeSession.id == session_id).with_for_update()
+    )
+    if practice is None:
+        raise HTTPException(404, "Practice session not found")
+    if payload.submission_key:
+        prior = await session.scalar(
+            select(CandidateResponse).where(
+                CandidateResponse.submission_key == payload.submission_key
+            )
+        )
+        if prior:
+            return {
+                "status": "duplicate_submission",
+                "evaluation": prior.evaluation,
+                "session": await _session_payload(session, practice),
+            }
+    if practice.status != "in_progress":
+        raise HTTPException(409, "Practice session is already complete")
+    queue = practice.question_queue or []
+    if practice.current_position >= len(queue):
+        practice.status = "completed"
+        practice.completed_at = datetime.now(UTC)
+        await session.commit()
+        return {"status": "completed", "session": await _session_payload(session, practice)}
+    question = await session.scalar(
+        select(Question)
+        .options(
+            selectinload(Question.skills).selectinload(QuestionSkill.skill),
+            selectinload(Question.role_families),
+        )
+        .where(Question.id == UUID(queue[practice.current_position]))
+    )
+    if question is None:
+        raise HTTPException(409, "Current question is no longer available")
+    expected = question.expected_points.splitlines()
+    evaluation = fallback_evaluate(expected, question.rubric, payload.answer)
+    method = "deterministic_keyword_heuristic"
+    if payload.allow_ai_evaluation:
+        try:
+            provider = get_ai_provider()
+            ai_result = await provider.evaluate_answer(
+                question.question_text, question.rubric, payload.answer
+            )
+            evaluation = ai_result.model_dump() | {"method": "ai_rubric", "approximate": True}
+            method = "ai_rubric"
+        except (AIConfigurationError, AIProviderError):
+            evaluation["provider_notice"] = (
+                "AI evaluation was unavailable; the local rubric heuristic was used."
+            )
+    response_row = CandidateResponse(
+        session_id=practice.id,
+        question_id=question.id,
+        response_text=payload.answer,
+        evaluation=evaluation,
+        evaluation_method=method,
+        submission_key=payload.submission_key,
+    )
+    session.add(response_row)
+    queue_meta = {}
+    if len(queue) > practice.current_position + 1:
+        rows = (
+            await session.scalars(
+                select(Question)
+                .options(selectinload(Question.skills).selectinload(QuestionSkill.skill))
+                .where(
+                    Question.id.in_(
+                        [UUID(value) for value in queue[practice.current_position + 1 :]]
+                    )
+                )
+            )
+        ).all()
+        queue_meta = {
+            str(row.id): {
+                "primary_skill": next(
+                    (
+                        skill.skill.name
+                        for skill in row.skills
+                        if skill.skill_id == row.primary_skill_id
+                    ),
+                    None,
+                ),
+                "difficulty": row.difficulty,
+            }
+            for row in rows
+        }
+    primary_skill = next(
+        (item.skill.name for item in question.skills if item.skill_id == question.primary_skill_id),
+        None,
+    )
+    remaining = queue[practice.current_position + 1 :]
+    adaptive = reorder_adaptive_queue(remaining, queue_meta, primary_skill, evaluation["outcome"])
+    practice.question_queue = queue[: practice.current_position + 1] + adaptive
+    practice.current_position += 1
+    if practice.current_position >= len(practice.question_queue):
+        practice.status = "completed"
+        practice.completed_at = datetime.now(UTC)
+    await session.commit()
+    return {
+        "status": practice.status,
+        "submitted_question_id": str(question.id),
+        "evaluation": evaluation,
+        "evaluation_method": method,
+        "reference_answer": question.reference_answer,
+        "adaptation": {
+            "outcome": evaluation["outcome"],
+            "next_question_adjusted": adaptive != remaining,
+            "strategy": "same-skill difficulty adjustment, bounded to unanswered plan questions",
+        },
+        "session": await _session_payload(session, practice),
+    }
+
+
+@app.get("/api/v1/practice-sessions/{session_id}/results")
+async def practice_session_results(
+    session_id: UUID, session: AsyncSession = Depends(session_dependency)
+):
+    practice = await session.get(PracticeSession, session_id)
+    if practice is None:
+        raise HTTPException(404, "Practice session not found")
+    rows = (
+        await session.execute(
+            select(CandidateResponse, Question)
+            .options(selectinload(Question.skills).selectinload(QuestionSkill.skill))
+            .join(Question, Question.id == CandidateResponse.question_id)
+            .where(CandidateResponse.session_id == practice.id)
+            .order_by(CandidateResponse.created_at)
+        )
+    ).all()
+    weak = {}
+    responses = []
+    for response, question in rows:
+        evaluation = response.evaluation or {}
+        if evaluation.get("outcome") in {"partial", "needs_review"}:
+            for item in question.skills:
+                weak[item.skill.name] = weak.get(item.skill.name, 0) + 1
+        responses.append(
+            {
+                "question_id": str(question.id),
+                "question": question.question_text,
+                "answer": response.response_text,
+                "reference_answer": question.reference_answer,
+                "evaluation": evaluation,
+                "evaluation_method": response.evaluation_method,
+            }
+        )
+    return {
+        "session_id": str(practice.id),
+        "status": practice.status,
+        "mode": practice.mode,
+        "responses": responses,
+        "weak_skills_revision_queue": sorted(weak, key=lambda key: (-weak[key], key)),
+        "approximate_feedback_notice": "AI and deterministic evaluations are practice guidance, not validated assessments.",
     }

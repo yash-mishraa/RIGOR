@@ -53,6 +53,8 @@ class JobPost(Base):
     competencies: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     tools_technologies: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ai_analysis: Mapped[dict | None] = mapped_column(JSON)
+    ai_analysis_fingerprint: Mapped[str | None] = mapped_column(String(64))
     content_version: Mapped[int] = mapped_column(Integer, default=1)
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -284,6 +286,10 @@ class PracticeSession(Base):
         ForeignKey("preparation_plans.id", ondelete="CASCADE"), index=True
     )
     status: Mapped[str] = mapped_column(String(24), default="in_progress")
+    mode: Mapped[str] = mapped_column(String(32), default="guided_practice")
+    current_position: Mapped[int] = mapped_column(Integer, default=0)
+    question_queue: Mapped[list[str]] = mapped_column(JSON, default=list)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -295,4 +301,7 @@ class CandidateResponse(Base):
     )
     question_id: Mapped[PyUUID] = mapped_column(ForeignKey("questions.id", ondelete="RESTRICT"))
     response_text: Mapped[str] = mapped_column(Text)
+    evaluation: Mapped[dict | None] = mapped_column(JSON)
+    evaluation_method: Mapped[str | None] = mapped_column(String(40))
+    submission_key: Mapped[str | None] = mapped_column(String(80), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

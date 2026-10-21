@@ -19,5 +19,13 @@ export const rigorApi = {
   importJob: (job) => request("/jobs/import", { method: "POST", body: JSON.stringify(job) }),
   createPlan: (jobId, questionLimit = 12) => request("/preparation-plans", {
     method: "POST", body: JSON.stringify({ job_id: jobId, question_limit: questionLimit })
-  })
+  }),
+  analyseJob: (jobId, useAi = false) => request(`/jobs/${jobId}/analyse`, { method: "POST", body: JSON.stringify({ use_ai: useAi }) }),
+  matchResume: (jobId, resumeText) => request("/resume-job-matches", { method: "POST", body: JSON.stringify({ job_id: jobId, resume_text: resumeText }) }),
+  generateQuestions: (jobId, maxQuestions = 3) => request(`/jobs/${jobId}/generate-questions`, { method: "POST", body: JSON.stringify({ max_questions: maxQuestions }) }),
+  reviewGeneratedQuestion: (questionId, decision) => request(`/questions/${questionId}/review`, { method: "POST", body: JSON.stringify({ decision }) }),
+  startSession: (planId, mode) => request("/practice-sessions", { method: "POST", body: JSON.stringify({ plan_id: planId, mode }) }),
+  getSession: (sessionId) => request(`/practice-sessions/${sessionId}`),
+  answerSession: (sessionId, answer, allowAi = false, submissionKey = crypto.randomUUID()) => request(`/practice-sessions/${sessionId}/responses`, { method: "POST", body: JSON.stringify({ answer, allow_ai_evaluation: allowAi, submission_key: submissionKey }) }),
+  sessionResults: (sessionId) => request(`/practice-sessions/${sessionId}/results`)
 };

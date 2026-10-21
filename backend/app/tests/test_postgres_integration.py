@@ -69,6 +69,24 @@ async def test_postgres_job_version_plan_and_cascade_cleanup():
                 f"/api/v1/preparation-plans/{changed.json()['preparation_plan']['id']}"
             )
             assert plan.status_code == 200
+            started = await client.post(
+                "/api/v1/practice-sessions",
+                json={
+                    "plan_id": changed.json()["preparation_plan"]["id"],
+                    "mode": "technical_mock",
+                },
+            )
+            assert started.status_code == 201, started.text
+            practice_id = started.json()["id"]
+            submitted = await client.post(
+                f"/api/v1/practice-sessions/{practice_id}/responses",
+                json={"answer": "Validate at the boundary and keep the transaction short."},
+            )
+            assert submitted.status_code == 200, submitted.text
+            resumed = await client.get(f"/api/v1/practice-sessions/{practice_id}")
+            assert resumed.status_code == 200 and resumed.json()["position"] == 1
+            results = await client.get(f"/api/v1/practice-sessions/{practice_id}/results")
+            assert results.status_code == 200 and len(results.json()["responses"]) == 1
     finally:
         app.dependency_overrides.clear()
         if job_id:
