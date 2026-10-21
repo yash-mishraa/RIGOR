@@ -889,53 +889,136 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       { name: "OAuth2 / JWT / mTLS", patterns: [/\boauth/i, /\bjwt\b/i, /\bmtls\b/i, /\bspiffe\b/i, /\btls\b/i], domain: "SECURITY & CRYPTO" }
     ];
 
+    const TECH_INTERVIEW_FOCUS = {
+      "PostgreSQL": "MVCC visibility, index maintenance, query plans, and vacuum behavior under write load",
+      "Redis": "event-loop latency, eviction policy, persistence trade-offs, and cache stampede protection",
+      "Apache Kafka": "partition ordering, consumer offsets, replication, and end-to-end delivery guarantees",
+      "Go (Golang)": "goroutine scheduling, garbage collection, escape analysis, and cancellation propagation",
+      "Rust": "ownership and borrowing, async task behavior, synchronization, and safe boundaries for shared state",
+      "C++": "object lifetime, move semantics, synchronization, and memory-safety boundaries",
+      "Python": "interpreter concurrency, async I/O, object allocation, and worker/process scaling",
+      "React 18 / Fiber": "render scheduling, state consistency, effects, and preventing unnecessary commits",
+      "TypeScript / V8": "type-system boundaries, runtime object shapes, garbage collection, and compiler performance",
+      "Node.js / Libuv": "event-loop phases, worker-pool contention, backpressure, and graceful shutdown",
+      "GraphQL": "resolver execution, batching, schema evolution, authorization, and query-cost limits",
+      "gRPC / HTTP2": "HTTP/2 connection multiplexing, flow control, deadlines, retries, and load balancing",
+      "Kubernetes": "controller reconciliation, scheduling, readiness, resource limits, and rollout safety",
+      "eBPF / Linux Kernel": "verifier constraints, hook selection, map lifecycle, and safe production rollout",
+      "PyTorch / CUDA": "tensor placement, kernel launch and synchronization, mixed precision, and profiling",
+      "LLM / vLLM / FlashAttention": "KV-cache capacity, continuous batching, prefill/decode costs, and token latency",
+      "Vector DB / HNSW / RAG": "recall/latency tuning, embedding freshness, filtering, and retrieval evaluation",
+      "RocksDB / LSM-Tree": "compaction strategy, read/write amplification, tombstones, and write stalls",
+      "AWS / Cloud Infra": "failure domains, IAM boundaries, capacity limits, and safe multi-region recovery",
+      "CRDTs / WebSockets": "convergence invariants, message ordering, reconnect recovery, and fan-out backpressure",
+      "OAuth2 / JWT / mTLS": "identity boundaries, key rotation, token lifetime, revocation, and transport identity"
+    };
+
+    const ROLE_TOPIC_DRILLS = {
+      backend: [
+        { title: "API contracts and backwards-compatible evolution", prompt: "How would you evolve a public API used by old and new clients at the same time? Cover compatibility, rollout, and deprecation.", signals: ["backwards compatibility", "schema evolution", "consumer contract", "deprecation"], answer: "Add optional fields or a new version without changing existing semantics; deploy tolerant readers first, then producers, measure old-client usage, and remove deprecated behavior only after a communicated sunset.", failure: "Changing field meaning or making an optional field required can silently break older clients; dual-write or versioned response paths need explicit parity checks.", validate: "Track per-version traffic, schema/contract test results, error rates, and deprecation usage before and after each rollout." },
+        { title: "Idempotency and safe request retries", prompt: "A client times out after a payment-like write and retries. How do you make the operation safe when the server may already have committed it?", signals: ["idempotency key", "unique constraint", "atomic commit", "replay"], answer: "Persist a client idempotency key with the request hash and final result in the same transaction as the write; return the saved result on replay and reject key reuse with a different payload.", failure: "A cache-only idempotency record can expire while a retry is still in flight, creating a duplicate side effect.", validate: "Test concurrent duplicate submissions, timeout-after-commit, key reuse with changed payload, and recovery after process restart." },
+        { title: "Database connection and pool saturation", prompt: "Latency rises while request volume stays flat and the database pool reaches its limit. How do you distinguish slow queries from queueing and prevent a retry cascade?", signals: ["pool wait time", "Little's Law", "bounded concurrency", "deadline"], answer: "Measure pool acquisition wait separately from query execution, size concurrency to database capacity, propagate deadlines, bound queues, and shed or defer work before workers are exhausted.", failure: "Increasing pool size can overload the database and amplify lock contention rather than increase throughput.", validate: "Compare pool wait, active connections, query latency, lock waits, and p95/p99 latency during a controlled load test." },
+        { title: "Background jobs and exactly-once effects", prompt: "Design a retryable background job pipeline where workers may crash after a side effect but before acknowledging the message.", signals: ["at-least-once", "idempotent handler", "outbox", "deduplication"], answer: "Assume at-least-once delivery. Use durable job state, idempotent effects or a transactional outbox, explicit retry limits, and a dead-letter path with replay controls.", failure: "Acknowledging before committing loses work; committing before acknowledgment can repeat the side effect after a crash.", validate: "Inject crashes at each boundary between claim, commit, and acknowledgment, then verify one logical effect and observable replay." },
+        { title: "Backend observability and SLO diagnosis", prompt: "A service meets its average-latency target but users report sporadic slowness. What would you instrument and how would you use it to find the cause?", signals: ["histograms", "trace correlation", "tail latency", "error budget"], answer: "Use histograms for latency distributions, request traces across dependencies, structured error classes, and service-level indicators segmented by endpoint and dependency.", failure: "Averages hide long tails, while high-cardinality labels can make telemetry expensive or unusable.", validate: "Correlate p95/p99 and error-budget burn with traces, saturation, and deployment markers; alert on sustained user-impacting burn." }
+      ],
+      frontend: [
+        { title: "React state ownership and render boundaries", prompt: "A single keystroke rerenders a large page and causes visible jank. How do you find the source and choose a safe state boundary?", signals: ["React Profiler", "state locality", "memoization", "render cost"], answer: "Profile commits first, move rapidly changing state closer to its consumers, split expensive subtrees, and memoize only where measured props stay stable.", failure: "Adding memoization everywhere can obscure data flow and fail when object/function identities change on every render.", validate: "Compare commit duration and interaction latency in a production-like profile before and after the change." },
+        { title: "Accessible interaction and keyboard behavior", prompt: "How would you build an accessible custom menu or dialog and verify it without relying on visual inspection alone?", signals: ["semantic HTML", "keyboard navigation", "focus management", "screen reader"], answer: "Prefer native semantics; implement predictable tab order, Escape/arrow behavior, visible focus, labeling, and focus restoration when a dialog closes.", failure: "A visually correct control built from generic divs may be unreachable or lack role/state announcements for assistive technology.", validate: "Test keyboard-only flows, automated accessibility checks, and a screen reader on supported browsers." },
+        { title: "Frontend data fetching and stale responses", prompt: "A user changes filters quickly and an older request returns last, replacing the newer results. How would you prevent stale UI state?", signals: ["request cancellation", "sequence token", "race condition", "loading state"], answer: "Associate results with the active query key, cancel obsolete requests where supported, and ignore responses whose request identity no longer matches current state.", failure: "Cancellation alone is not sufficient if a response already completed or the data source ignores abort signals.", validate: "Test deliberately reordered responses, rapid navigation, retries, and unmount during a request." },
+        { title: "Web performance and asset strategy", prompt: "A page is slow on mobile despite acceptable server response time. How do you identify and improve the dominant client-side costs?", signals: ["Core Web Vitals", "bundle analysis", "LCP", "code splitting"], answer: "Measure field and lab Core Web Vitals, inspect long tasks and bundle composition, prioritize critical content, defer non-critical code, and optimize image/font delivery.", failure: "Code splitting can increase waterfalls; aggressively lazy-loading above-the-fold assets can worsen LCP.", validate: "Compare representative device/network profiles and field metrics by route before and after each change." },
+        { title: "Frontend testing strategy", prompt: "How do you test a critical checkout or onboarding flow so tests catch user-visible regressions but remain reliable?", signals: ["unit tests", "integration tests", "accessibility", "end-to-end"], answer: "Test pure logic in unit tests, key component interactions at integration level, and only high-value user journeys end to end; assert outcomes rather than implementation details.", failure: "Brittle selectors, shared mutable test data, and over-mocking can make a green suite disagree with real behavior.", validate: "Run deterministic fixtures, accessibility assertions, browser coverage on critical paths, and track flaky-test rates." }
+      ],
+      ml_systems: [
+        { title: "GPU memory budgeting for model serving", prompt: "How do you estimate whether a model-serving workload fits on a GPU before deployment, including activations and concurrent requests?", signals: ["weights", "KV cache", "activation memory", "headroom"], answer: "Budget weights, runtime/graph overhead, activations, and per-request KV cache; multiply cache cost by active sequence count and reserve headroom for fragmentation and peak shapes.", failure: "Sizing only the model weights ignores context length and concurrency, causing OOMs during realistic traffic.", validate: "Measure peak allocated and reserved memory across worst-case prompts, batch sizes, and prefill/decode phases." },
+        { title: "Inference batching and tail latency", prompt: "Throughput improves with larger batches, but time-to-first-token becomes worse. How would you tune serving for both throughput and latency?", signals: ["continuous batching", "TTFT", "inter-token latency", "queueing"], answer: "Use continuous/iteration batching with queue limits, separate prefill and decode costs, and schedule against explicit TTFT and inter-token latency targets.", failure: "An unbounded queue or large static batch can improve aggregate tokens/sec while violating interactive latency objectives.", validate: "Benchmark throughput, TTFT, inter-token latency, and queue time by prompt/output length and concurrency." },
+        { title: "Distributed training communication bottlenecks", prompt: "GPU utilization is low during distributed training. How do you determine whether data loading, compute, or collective communication is limiting progress?", signals: ["NCCL", "all-reduce", "input pipeline", "overlap"], answer: "Profile step timelines per rank, inspect input wait and collective time, verify topology/bandwidth, and overlap communication with independent computation where the model permits.", failure: "Optimizing one rank or measuring average GPU utilization can hide a straggler that stalls every synchronization step.", validate: "Compare per-rank traces, step-time distributions, data-loader wait, and scaling efficiency across node counts." },
+        { title: "Training-data quality and reproducibility", prompt: "A model metric improves offline but regresses after launch. How do you investigate data leakage, evaluation mismatch, and reproducibility?", signals: ["data leakage", "holdout set", "dataset version", "reproducibility"], answer: "Version datasets and preprocessing, maintain time- or entity-aware holdouts, audit train/eval overlap, and align offline evaluation with production traffic and labels.", failure: "Random splits can leak near-duplicates or future information and create misleading offline gains.", validate: "Re-run evaluation from immutable inputs, slice metrics by cohort, and compare calibration and data freshness in production." },
+        { title: "Model-serving rollout and rollback", prompt: "How would you release a new model or inference runtime without exposing all users to a quality or latency regression?", signals: ["canary", "shadow traffic", "quality metrics", "rollback"], answer: "Validate offline, shadow requests where safe, canary by a bounded cohort, compare quality and systems metrics, and keep model/runtime artifacts and routing rollback-ready.", failure: "Comparing only aggregate latency can miss quality regression or a long-tail cohort that receives worse outputs.", validate: "Gate rollout on quality, safety, error, GPU saturation, and latency metrics with minimum sample sizes." }
+      ],
+      platform: [
+        { title: "Kubernetes readiness and graceful termination", prompt: "During deployment, users see dropped requests even though pods remain healthy. Explain how readiness, endpoint removal, and process shutdown should coordinate.", signals: ["readiness probe", "endpoint propagation", "preStop", "connection draining"], answer: "Stop accepting new work, mark the pod unready, allow endpoint propagation, drain existing requests within a bounded grace period, and then exit cleanly.", failure: "Immediate process exit or an unbounded shutdown hook can respectively drop in-flight requests or exceed the termination deadline.", validate: "Exercise rolling deploys under persistent connections and measure termination errors, drain time, and endpoint convergence." },
+        { title: "Resource requests, limits, and throttling", prompt: "A container shows CPU throttling and high tail latency despite low average CPU use. What would you inspect before changing its limits?", signals: ["CPU quota", "throttling", "requests and limits", "tail latency"], answer: "Inspect quota-period throttling, request/limit sizing, per-container CPU saturation, concurrency, and scheduling. Match runtime parallelism to effective CPU capacity.", failure: "Raising limits without understanding node contention or runtime worker counts can move the bottleneck and harm neighbors.", validate: "Compare throttled periods, run-queue delay, latency distributions, and node-level saturation through a controlled rollout." },
+        { title: "Infrastructure changes and drift control", prompt: "How do you safely apply a large infrastructure change when live resources may have drifted from the declared configuration?", signals: ["plan review", "state", "drift detection", "small batches"], answer: "Refresh and inspect state, review a reproducible plan, separate unrelated changes, apply in small batches, and verify actual service health after each step.", failure: "Blindly applying a stale or broad plan can replace critical resources or hide out-of-band changes.", validate: "Use policy checks, peer review, drift reports, change records, and post-apply service-level checks." },
+        { title: "Observability and alert quality", prompt: "On-call is overwhelmed by noisy alerts while a real service degradation was missed. How would you redesign the alerting?", signals: ["user-facing SLI", "burn rate", "actionable alert", "symptom"], answer: "Alert on user-impacting symptoms and fast/slow SLO burn, attach ownership and runbooks, and keep diagnostic signals in dashboards rather than paging on every cause.", failure: "Thresholds on one noisy infrastructure metric create alert fatigue and miss correlated user impact.", validate: "Replay historical incidents against proposed alerts and measure detection time, false pages, and actionable coverage." },
+        { title: "Capacity planning and autoscaling", prompt: "Autoscaling adds replicas but request latency keeps increasing. What signals and constraints should drive a better scaling policy?", signals: ["queue depth", "concurrency", "scaling lag", "dependency capacity"], answer: "Scale on a leading workload signal such as queue depth or in-flight work, account for startup/readiness delay, and cap replicas to downstream capacity.", failure: "Scaling on CPU alone can be late for I/O-bound work or overwhelm a constrained database.", validate: "Load-test step changes and bursts while measuring queue age, time-to-capacity, latency, and downstream saturation." }
+      ],
+      data: [
+        { title: "Streaming delivery guarantees and deduplication", prompt: "A consumer processes a record, commits its database write, then crashes before committing the offset. What happens on restart and how should the pipeline behave?", signals: ["at-least-once", "offset commit", "idempotent sink", "deduplication"], answer: "The record is delivered again under at-least-once semantics. Use an idempotent sink or transactional write-plus-offset strategy and preserve event identity for deduplication.", failure: "Committing the offset before the durable sink write loses data; committing later can repeat it.", validate: "Fault-inject crashes between processing, persistence, and offset commit; verify replay safety and lag recovery." },
+        { title: "Backfills and late-arriving data", prompt: "How do you backfill a large historical dataset while new events continue arriving and downstream consumers remain online?", signals: ["watermark", "idempotent upsert", "checkpoint", "backfill/live overlap"], answer: "Use bounded, checkpointed ranges, idempotent writes, an explicit source watermark, and a reconciliation phase for data arriving during the backfill.", failure: "An unbounded backfill can starve live work or overwrite newer values with older snapshots.", validate: "Track lag, duplicate and missing keys, write amplification, and parity against a trusted source snapshot." },
+        { title: "Schema evolution across producers and consumers", prompt: "A producer wants to rename a field while several independent consumers deploy on different schedules. What rollout sequence avoids data loss?", signals: ["schema registry", "additive change", "dual read/write", "compatibility"], answer: "Introduce a new optional field, update consumers to read both forms, migrate producers to write the new field, measure old-field usage, then remove it after compatibility checks.", failure: "A rename performed in one deploy breaks consumers that still require the old field.", validate: "Enforce schema compatibility in CI and monitor consumer parse failures and field usage throughout migration." },
+        { title: "Data quality and pipeline freshness", prompt: "A pipeline is green but downstream reports are wrong or stale. What quality checks should fail the pipeline or alert its owner?", signals: ["freshness", "completeness", "uniqueness", "reconciliation"], answer: "Define freshness, completeness, uniqueness, validity, and reconciliation checks at source and output boundaries with clear ownership and severity.", failure: "A job-success signal alone says nothing about semantic correctness or missing partitions.", validate: "Use sampled source-to-target reconciliation, volume/anomaly checks, freshness SLAs, and alert tests with injected bad data." },
+        { title: "Partitioning and hot-key skew", prompt: "One partition lags far behind while the rest of a distributed stream is healthy. How do you diagnose and mitigate skew without breaking ordering?", signals: ["partition key", "hot key", "skew", "ordering"], answer: "Inspect per-partition rates and key distribution; choose a partition key aligned with required ordering, and split hot keys only when the ordering invariant can be preserved.", failure: "Adding partitions does not distribute a single hot key if the same partitioning key remains unchanged.", validate: "Compare per-partition throughput, lag age, key-frequency distribution, and ordering correctness under representative loads." }
+      ],
+      security: [
+        { title: "Threat modeling a new service", prompt: "Before launching a service that stores user data and accepts uploads, how would you prioritize its threat model and security controls?", signals: ["assets and trust boundaries", "attack surface", "abuse cases", "mitigations"], answer: "Identify assets, actors, trust boundaries, entry points, and abuse cases; rank by likelihood and impact, then map concrete preventive and detective controls to each risk.", failure: "A checklist without data flows or ownership misses cross-service trust assumptions and abuse paths.", validate: "Review attack scenarios with engineering, test the highest-risk controls, and revisit the model after architecture changes." },
+        { title: "Authorization and tenant isolation", prompt: "How do you prevent an authenticated user from accessing another tenant's records through an API or background job?", signals: ["server-side authorization", "tenant context", "least privilege", "isolation test"], answer: "Derive tenant identity from a trusted server-side principal, enforce authorization at every data access boundary, and carry scoped identity into jobs.", failure: "Trusting a client-supplied tenant ID or relying only on UI filtering enables insecure direct object access.", validate: "Add cross-tenant negative tests for API, exports, caches, and asynchronous workers." },
+        { title: "Secret rotation without downtime", prompt: "A production credential may be exposed. How do you rotate it without causing a prolonged outage or leaving stale copies active?", signals: ["revoke", "overlapping credentials", "secret inventory", "audit"], answer: "Identify all consumers, distribute a replacement through the secret manager, support a short overlap if the provider permits, switch consumers, verify use, then revoke the old credential.", failure: "Rotating only the primary service while workers or rollback deployments retain the old secret leaves a compromise window.", validate: "Audit secret access, test rotation in staging, verify no old-key traffic remains, and invalidate leaked credentials." },
+        { title: "Input and SSRF boundary defense", prompt: "A backend fetches URLs supplied by users. How would you prevent SSRF, including redirects and DNS rebinding cases?", signals: ["allowlist", "DNS resolution", "redirect validation", "egress controls"], answer: "Prefer an allowlist of destinations; validate resolved IPs against private/reserved ranges on each redirect, constrain protocols and ports, and enforce network egress controls.", failure: "Checking only the initial hostname allows redirects or DNS changes to reach internal metadata and control-plane endpoints.", validate: "Test redirects, IPv4/IPv6 encodings, DNS changes, unusual ports, and blocked network ranges." },
+        { title: "Incident response and evidence handling", prompt: "You suspect a production service account was compromised. What are your first actions, and how do you preserve evidence while containing risk?", signals: ["containment", "credential revocation", "audit trail", "scope"], answer: "Use the incident process, revoke or constrain credentials, isolate affected access paths, preserve logs and timelines, determine scope, and communicate with accountable responders.", failure: "Deleting resources or rotating without preserving audit evidence can obscure impact and impede investigation.", validate: "Confirm containment with access logs, enumerate affected identities and data, document actions, and track follow-up remediation." }
+      ],
+      systems: [
+        { title: "Memory ownership and lifetime safety", prompt: "A buffer is shared between asynchronous tasks and occasionally becomes invalid after the originating request ends. How would you reason about lifetime and ownership?", signals: ["ownership", "lifetime", "shared ownership", "borrow boundary"], answer: "Make the owner and lifetime explicit, transfer ownership when a task outlives the request, or use a carefully scoped shared owner with synchronization.", failure: "A borrowed view into request-local storage cannot safely outlive its backing allocation, even if it appears to work in light testing.", validate: "Exercise cancellation and delayed task completion under sanitizers or language-specific lifetime checks." },
+        { title: "Concurrency correctness and lock contention", prompt: "A multithreaded service has rare corrupt state and high lock wait time. How do you separate correctness bugs from performance contention?", signals: ["invariant", "race detector", "lock ordering", "contention profile"], answer: "Write down the invariant and ownership model, use race/concurrency tooling to find unsafe access, then profile lock wait and critical-section duration before changing synchronization.", failure: "Replacing a mutex with atomics without a memory-order proof can preserve the race while making it harder to diagnose.", validate: "Stress adversarial schedules, run race detection, and benchmark contention with realistic data and thread counts." },
+        { title: "Profiling CPU and memory regressions", prompt: "A release increases CPU and memory use but request volume is unchanged. What sequence of measurements helps isolate the regression?", signals: ["flamegraph", "allocation profile", "baseline", "regression"], answer: "Compare equivalent workloads and builds, inspect CPU and allocation profiles, identify changed hot paths, and validate one controlled optimization at a time.", failure: "Sampling unlike workloads or relying on aggregate host metrics can point to the wrong component.", validate: "Record repeatable benchmarks, confidence ranges, p95 latency, allocation rate, and peak resident memory." },
+        { title: "System call and I/O bottlenecks", prompt: "A file-processing worker has low CPU utilization but poor throughput. How would you find whether syscalls, storage, or queueing is limiting it?", signals: ["I/O wait", "syscall tracing", "batching", "queue depth"], answer: "Measure time in I/O wait and syscall counts/latency, inspect device queue depth and access pattern, then evaluate bounded batching or asynchronous I/O where it fits.", failure: "Increasing concurrency can deepen a saturated I/O queue and worsen tail latency without increasing device throughput.", validate: "Compare throughput and latency at controlled queue depths, including cold-cache and steady-state runs." },
+        { title: "ABI and binary compatibility", prompt: "A shared native library changes a public struct or symbol. How do you avoid breaking downstream binaries that cannot be rebuilt immediately?", signals: ["ABI", "symbol versioning", "layout", "compatibility"], answer: "Preserve exported layouts and symbols where required, add versioned entry points or opaque handles, and document the compatibility contract.", failure: "Changing struct size or ownership conventions can corrupt memory even when source-level tests pass.", validate: "Run ABI diff tooling and compatibility tests against previously released clients and supported platforms." }
+      ],
+      distributed: [
+        { title: "Consistency guarantees and client expectations", prompt: "A product asks for globally available reads and writes but also expects every read to reflect the latest completed write. How do you explain and design the trade-off?", signals: ["linearizability", "replica lag", "quorum", "consistency contract"], answer: "Clarify the required consistency boundary; linearizable reads need coordination or a valid lease/quorum proof, while weaker reads can use replicas with explicit staleness semantics.", failure: "Serving locally from a stale replica while advertising read-after-write consistency violates the client contract.", validate: "Test writes followed by reads across regions, partitions, leader changes, and replica lag." },
+        { title: "Partition recovery and reconciliation", prompt: "Two regions accept updates during a network partition. How should the system reconcile them when connectivity returns?", signals: ["conflict resolution", "versioning", "idempotent replay", "business invariant"], answer: "Define the conflict policy before deployment—single-writer, versioned merge, or explicit conflict resolution—and make replay idempotent with durable causal/version metadata.", failure: "Last-write-wins based only on unsynchronized wall clocks can discard valid updates or violate domain invariants.", validate: "Simulate partitions, duplicate/reordered replay, and concurrent updates against business-level invariants." },
+        { title: "Retry budgets and cascading failure", prompt: "A downstream service slows down, and callers begin retrying aggressively. How do you prevent retries from turning a partial outage into a system-wide one?", signals: ["retry budget", "exponential backoff", "jitter", "deadline propagation"], answer: "Set bounded deadlines and retry budgets, use exponential backoff with jitter, retry only safe operations, and shed load or trip circuit breakers when capacity is exhausted.", failure: "Retries without an overall deadline multiply traffic exactly when the dependency has least spare capacity.", validate: "Inject latency and errors, then measure retry amplification, queue depth, recovery time, and successful user requests." },
+        { title: "Multi-region failover and failback", prompt: "A region is isolated and traffic fails over. What must be true before routing traffic back after the region recovers?", signals: ["fencing", "replication lag", "failback", "split brain"], answer: "Fence the old writer, verify data replication and ownership epochs, reconcile divergent writes, and shift traffic gradually with health and consistency checks.", failure: "Routing back before confirming writer ownership can create two active writers and divergent state.", validate: "Run game days covering isolation, promotion, stale-node rejoin, and staged failback with measured data loss and recovery objectives." },
+        { title: "Distributed tracing and request causality", prompt: "A request fans out to many services and becomes slow only for a subset of users. How do you trace causality without overloading telemetry storage?", signals: ["trace context", "critical path", "sampling", "high-cardinality"], answer: "Propagate trace context across async boundaries, inspect critical-path spans, and use tail-based or error-aware sampling to retain slow and failing requests.", failure: "Breaking trace context at queues makes asynchronous work appear unrelated; excessive high-cardinality tags inflate telemetry cost.", validate: "Verify trace continuity through retries and queues, sampling coverage for slow requests, and end-to-end latency attribution." }
+      ]
+    };
+
     const JOB_CATEGORIES = {
       backend: {
         label: "Backend Engineer",
         description: "APIs, databases, caching, runtime behavior, and service reliability.",
-        questionKeys: ["postgresql_mvcc", "redis_internals", "golang_runtime"],
+        questionKeys: ["postgresql_mvcc", "redis_internals", "golang_runtime", "kafka_streaming", "distributed_consensus_transactions", "networking_grpc_security"],
         keywords: ["Go", "Java", "Python", "REST APIs", "SQL", "distributed systems", "caching", "Kafka", "microservices"]
       },
       frontend: {
         label: "Frontend Engineer",
         description: "Browser rendering, React behavior, TypeScript, performance, and web application architecture.",
-        questionKeys: ["react_browser_internals", "typescript_node_internals"],
+        questionKeys: ["react_browser_internals", "typescript_node_internals", "distributed_consensus_transactions", "networking_grpc_security"],
         keywords: ["React", "TypeScript", "JavaScript", "accessibility", "web performance", "CSS", "design systems", "browser", "testing"]
       },
       ml_systems: {
         label: "AI / ML Systems Engineer",
         description: "GPU memory and compute, LLM inference, distributed training, and ML serving.",
-        questionKeys: ["llm_gpu_systems"],
+        questionKeys: ["llm_gpu_systems", "distributed_consensus_transactions", "lsm_rocksdb_storage"],
         keywords: ["Python", "PyTorch", "CUDA", "TensorFlow", "Triton", "inference", "LLM", "distributed training", "GPU"]
       },
       platform: {
         label: "Cloud / Platform Engineer",
         description: "Kubernetes, Linux, cloud infrastructure, networking, and production operations.",
-        questionKeys: ["kubernetes_linux_kernel"],
+        questionKeys: ["kubernetes_linux_kernel", "distributed_consensus_transactions", "networking_grpc_security", "golang_runtime"],
         keywords: ["Kubernetes", "AWS", "Terraform", "Linux", "Docker", "observability", "SRE", "networking", "CI/CD"]
       },
       data: {
         label: "Data Infrastructure Engineer",
         description: "Streaming pipelines, event delivery, storage engines, and data processing reliability.",
-        questionKeys: ["kafka_streaming", "lsm_rocksdb_storage"],
+        questionKeys: ["kafka_streaming", "lsm_rocksdb_storage", "postgresql_mvcc", "distributed_consensus_transactions"],
         keywords: ["SQL", "Kafka", "Spark", "Airflow", "dbt", "ETL", "warehouse", "data modeling", "orchestration"]
       },
       security: {
         label: "Security Engineer",
         description: "Identity, transport security, threat modeling, and secure networked services.",
-        questionKeys: ["networking_grpc_security"],
+        questionKeys: ["networking_grpc_security", "distributed_consensus_transactions", "kubernetes_linux_kernel"],
         keywords: ["security", "threat modeling", "IAM", "OAuth", "TLS", "encryption", "incident response", "penetration testing", "compliance"]
       },
       systems: {
         label: "Systems Engineer",
         description: "Systems programming, memory models, CPU behavior, concurrency, and runtime performance.",
-        questionKeys: ["rust_cpp_memory_concurrency"],
+        questionKeys: ["rust_cpp_memory_concurrency", "golang_runtime", "kubernetes_linux_kernel", "networking_grpc_security"],
         keywords: ["C++", "Rust", "Linux", "kernel", "concurrency", "memory", "networking", "performance", "compilers"]
       },
       distributed: {
         label: "Distributed Systems Engineer",
         description: "Consensus, replication, consistency, fault tolerance, and multi-region system design.",
-        questionKeys: ["distributed_consensus_transactions"],
+        questionKeys: ["distributed_consensus_transactions", "kafka_streaming", "postgresql_mvcc", "networking_grpc_security"],
         keywords: ["consensus", "replication", "fault tolerance", "distributed systems", "availability", "consistency", "sharding", "event-driven"]
       }
     };
@@ -943,8 +1026,11 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
     function decompileResumeAndGenerateQuestions(rawText) {
       const lines = rawText
         .split(/\r?\n/)
-        .map(l => l.replace(/^[•\-\*\u2022\s]+/, "").trim())
-        .filter(l => l.length > 22);
+        .map(sourceLine => ({
+          text: sourceLine.replace(/^[•\-\*\u2022\s]+/, "").trim(),
+          isBullet: /^\s*[•\-\*\u2022]\s+/.test(sourceLine)
+        }))
+        .filter(line => line.text.length > 22 || line.isBullet);
 
       // 1. Detect technologies mentioned in the resume
       const detectedTechs = [];
@@ -954,17 +1040,18 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         }
       });
 
-      // 2. Extract high-signal resume claims (bullets with numbers, scale metrics, or engineering verbs)
+      // 2. Keep all resume bullets and other high-signal experience lines.
       const actionVerbRx = /\b(architected|designed|built|scaled|reduced|optimized|migrated|implemented|engineered|led|eliminated|tuned|resolved|orchestrated|deployed|wrote)\b/i;
       const metricRx = /(\d+(\.\d+)?\s*(%|ms|s|x|k|m|b|tb|gb|mb|rps|tps|qps|fps|nodes|gpus|brokers|users|cores|requests?\s*(?:per|\/)\s*(?:second|sec|day|week|month|year)))/i;
 
       const claims = [];
-      lines.forEach((line, idx) => {
+      lines.forEach(({ text: line, isBullet }) => {
         const isHeader = /^[A-Z\s—\-|0-9()]{8,}$/.test(line) && !metricRx.test(line);
         if (isHeader) return;
         const hasMetric = metricRx.test(line);
+        const hasSkill = TECH_DICTIONARY.some(tech => tech.patterns.some(pattern => pattern.test(line)));
         const hasVerb = actionVerbRx.test(line);
-        if (hasMetric || hasVerb || line.length > 55) {
+        if (isBullet || hasMetric || hasVerb || hasSkill || line.length > 70) {
           let vector = "ARCHITECTURAL TRADEOFF";
           if (hasMetric) vector = "METRIC & TAIL-LATENCY AUDIT";
           else if (/\b(migrated|replaced|refactored)\b/i.test(line)) vector = "MIGRATION & ROLLBACK PROOF";
@@ -979,7 +1066,7 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       });
 
       if (claims.length === 0 && lines.length > 0) {
-        lines.slice(0, 5).forEach((l, i) => {
+        lines.slice(0, 5).forEach(({ text: l }, i) => {
           claims.push({
             id: `CLM-0${i + 1}`,
             text: l,
@@ -991,8 +1078,6 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
 
       // 3. Match Knowledge Base Deep Questions to specific Resume Claims
       const generatedQuestions = [];
-      const usedClaimIndices = new Set();
-
       const selectedCategory = JOB_CATEGORIES[state.jobCategory] || JOB_CATEGORIES.backend;
       TECHNICAL_KNOWLEDGE_BASE.forEach(kb => {
         if (selectedCategory.questionKeys.includes(kb.key)) {
@@ -1014,8 +1099,6 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           const boundClaim = bestClaimIdx >= 0
             ? claims[bestClaimIdx].text
             : `Role practice: ${selectedCategory.label}${rawText.trim() ? "" : " (no resume uploaded)"}.`;
-
-          if (bestClaimIdx >= 0) usedClaimIndices.add(bestClaimIdx);
 
           const genericRolePrompt = kb.prompt.replace(
             /Your resume (?:highlights|involves|mentions|states)/gi,
@@ -1041,86 +1124,114 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         }
       });
 
-      // 4. Synthesize Custom Line-by-Line Claim Cross-Examination Probes directly from the user's unique resume bullets!
-      claims.forEach((claim, cIdx) => {
-        // Always generate bespoke claim-specific probes for quantitative or architectural bullets
-        if (claim.hasMetric || !usedClaimIndices.has(cIdx) || generatedQuestions.length < 8) {
-          if (generatedQuestions.length >= 14) return;
-          const metricMatches = claim.text.match(/(\d+(?:,\d+)*(?:\.\d+)?\s*(?:%|ms|s|x|k|m|b|tb|gb|rps|tps|qps|fps|nodes|gpus|brokers|users|cores)?)/gi) || [];
-          const metricStr = metricMatches.slice(0, 3).join(", ") || "your stated production scale";
+      // Build a substantial job-specific study bank in addition to stack and resume probes.
+      ROLE_TOPIC_DRILLS[state.jobCategory].forEach((topic, index) => {
+        const rolePracticeClaim = `Practice track: ${selectedCategory.label} — ${topic.title}.`;
+        generatedQuestions.push({
+          id: `ROLE-${index + 1}`,
+          domain: `${selectedCategory.label.toUpperCase()} PRACTICE`,
+          level: state.seniority,
+          claimId: "ROLE-01",
+          boundClaim: rolePracticeClaim,
+          title: topic.title,
+          prompt: topic.prompt,
+          intent: `Practices a core ${selectedCategory.label} competency with a production-oriented scenario.`,
+          signals: topic.signals,
+          followups: [
+            { level: "FAILURE MODE", q: "What is the most important failure mode or boundary to account for?", a: topic.failure },
+            { level: "VALIDATION", q: "How would you verify the design before and after release?", a: topic.validate }
+          ],
+          mechanism: topic.answer,
+          failures: topic.failure,
+          codeBlueprint: `Decision: ${topic.answer}\nFailure guard: ${topic.failure}\nVerification: ${topic.validate}`,
+          l4Contrast: "Describe the expected behavior and the main system boundary.",
+          l6Contrast: `${topic.answer} Account for the failure case and validate the behavior with measurable production signals.`
+        });
+      });
 
-          // Avoid duplicating if the exact same claim already has a bespoke metric probe
-          const bespokeTitle = claim.hasMetric
-            ? `Quantitative Claim Verification & Tail-Distribution Audit (${metricStr})`
-            : `Architectural Ownership, Failure Blast Radius & Tradeoff Defense`;
+      // Create an independent deep-dive probe for every detected technology in the resume.
+      detectedTechs.forEach(tech => {
+        const focus = TECH_INTERVIEW_FOCUS[tech.name];
+        if (!focus) return;
+        const matchingClaim = claims.find(claim => tech.patterns.some(pattern => pattern.test(claim.text)));
+        const signals = [tech.name, ...focus.split(/[,/ ]+/).filter(word => word.length > 4).slice(0, 5)];
+        const answer = `For ${tech.name}, explain ${focus}. Tie the decision to the workload and constraints in your own experience, state the invariant you protected, and compare at least one alternative.`;
+        const failure = `A design around ${tech.name} can fail when its workload assumptions change: identify saturation, stale state, or unsafe recovery before scaling the same approach further. Bound concurrency, define a fallback, and preserve a tested rollback path.`;
+        const validation = `Use a representative workload and compare latency distributions, resource saturation, correctness, and recovery behavior before and after the change. Segment results by traffic shape and test the relevant failure case.`;
+        generatedQuestions.push({
+          id: `TECH-${tech.name}`,
+          domain: "RESUME STACK DEEP DIVE",
+          level: state.seniority,
+          claimId: matchingClaim ? matchingClaim.id : "STACK-01",
+          boundClaim: matchingClaim ? matchingClaim.text : `Technology listed in resume: ${tech.name}.`,
+          title: `${tech.name}: internals, trade-offs, and production failure`,
+          prompt: `Your resume lists ${tech.name}. Explain ${focus}. Which production constraint shaped your design, what alternative did you reject, and what evidence would make you change that decision?`,
+          intent: `Probes hands-on depth for the specific ${tech.name} skill found in your resume.`,
+          signals,
+          followups: [
+            { level: "FAILURE MODE", q: `What workload or failure can invalidate your ${tech.name} design?`, a: failure },
+            { level: "VALIDATION", q: `What evidence would show that your ${tech.name} implementation is correct and ready to scale?`, a: validation }
+          ],
+          mechanism: answer,
+          failures: failure,
+          codeBlueprint: `Technology: ${tech.name}\nConstraint: ${focus}\nInvariant: state the correctness or availability guarantee\nValidation: measure the workload and failure boundary`,
+          l4Contrast: `Name the core ${tech.name} behavior and how you used it.`,
+          l6Contrast: `${answer} Include quantified evidence, a rejected alternative, and a failure/recovery plan.`
+        });
+      });
 
-          const bespokeQuestion = {
-            id: `PRB-${String(generatedQuestions.length + 1).padStart(2, "0")}`,
-            domain: claim.hasMetric ? "RESUME METRIC CROSS-EXAMINATION" : "SYSTEM ARCHITECTURE & OWNERSHIP",
+      // Generate two separate interview drills for every substantive resume claim.
+      claims.forEach(claim => {
+        const matchedSkills = detectedTechs
+          .filter(tech => tech.patterns.some(pattern => pattern.test(claim.text)))
+          .map(tech => tech.name);
+        const skills = matchedSkills.length ? matchedSkills : [selectedCategory.label];
+        const signals = [...skills, ...(claim.hasMetric ? ["baseline", "measurement method", "tail latency"] : ["ownership", "invariant", "trade-off"])];
+        const metricMatches = claim.text.match(/\d+(?:,\d+)*(?:\.\d+)?\s*(?:%|ms|s|x|k|m|b|tb|gb|rps|tps|qps|fps|nodes|gpus|brokers|users|cores|requests?\s*(?:per|\/)\s*(?:second|sec|day|week|month|year))?/gi) || [];
+        const metricText = metricMatches.slice(0, 3).join(", ") || "the outcome described in this claim";
+        const addClaimQuestion = (angle, title, prompt, answer, failure, validation) => {
+          generatedQuestions.push({
+            id: `CLAIM-${claim.id}-${angle}`,
+            domain: claim.hasMetric ? "RESUME METRIC CROSS-EXAMINATION" : "RESUME OWNERSHIP & DESIGN",
             level: state.seniority,
             claimId: claim.id,
             boundClaim: claim.text,
-            title: `${bespokeTitle} — [${claim.id}]`,
-            prompt: claim.hasMetric
-              ? `On your resume, you state: "${claim.text}". Defend the exact engineering methodology behind (${metricStr}): (1) How was the baseline vs. post-change metric instrumented (e.g., eBPF/HDRHistogram p99 vs. client-side wall-clock vs. server average)? (2) What was the concrete hardware/kernel/algorithmic bottleneck before your change, and what new secondary bottleneck appeared once you shifted that limit? (3) Under what specific traffic pattern or failure condition does your optimization degrade or regress?`
-              : `Your resume states: "${claim.text}". Walk me through the two strongest alternative designs you rejected before committing to this architecture. Specifically: how did you handle data consistency and zero-downtime rollback during the cutover, what invariant breaks first at 10x load, and how does the system degrade when its primary dependency experiences a gray failure (high latency without hard connection refusal)?`,
-            intent: "Directly cross-examines the candidate's verbatim resume bullet to verify authentic hands-on authorship vs. passive team attribution or inflated resume metrics.",
-            signals: [
-              "HDRHistogram / p99 vs p50",
-              "Little's Law (L = lambda * W)",
-              "Amdahl's Law / bottleneck shift",
-              "Dual-write / shadow traffic cutover",
-              "Gray failure circuit breaking",
-              "Load shedding / backpressure",
-              "Idempotency & rollback invariant"
-            ],
+            title: `${title} — ${claim.id}`,
+            prompt,
+            intent: "Cross-examines this specific resume statement for hands-on ownership, technical reasoning, and verifiable results.",
+            signals,
             followups: [
-              {
-                level: "LEVEL 1 // INSTRUMENTATION & STATISTICAL RIGOR",
-                q: "Why does averaging percentile latencies across cluster nodes (e.g., averaging `p99` across 20 pods in Prometheus/Datadog) produce mathematically invalid data, and how did you prevent Coordinated Omission in your benchmarks?",
-                a: "Percentiles cannot be averaged across nodes because traffic and tail distributions are skewed; you must aggregate raw histogram buckets (`histogram_quantile(0.99, sum(rate(bucket[5m])) by (le))` or DDSketch/HDRHistogram merge). Furthermore, if a load generator waits for response `N` before sending request `N+1` (**Coordinated Omission**), a single 2-second system freeze only records *one* slow sample instead of the thousands of requests that *should* have queued during those 2 seconds—massively underreporting true p99 latency."
-              },
-              {
-                level: "LEVEL 2 // MIGRATION & DUAL-WRITE CONSISTENCY",
-                q: "When migrating or optimizing a live production path, how do you verify parity between the old path and the new path without risking customer-visible corruption or double-charging?",
-                a: "Execute a 4-phase cutover: (1) **Shadow / Dark Reads**: Fork production read traffic asynchronously to the new system and compare payload hashes/latencies in background telemetry without returning the shadow result to callers. (2) **CDC / Transactional Backfill**: Stream historical + live mutations with monotonic version comparison so out-of-order backfill writes never overwrite newer live writes. (3) **Canary Feature-Flagged Cutover** (1% -> 10% -> 50% -> 100%) with automated rollback triggers on error/latency budgets. (4) Maintain reverse-sync for 7 days so instant rollback never loses data committed after cutover."
-              },
-              {
-                level: "LEVEL 3 // GRAY FAILURE & CASCADING OVERLOAD",
-                q: "If a downstream dependency slows down from 5ms to 800ms (a 'Gray Failure'—no 5xx errors, just slow sockets), what happens to your upstream thread/connection pools according to Little's Law, and how do you shed load cleanly?",
-                a: "By **Little's Law (`L = λ * W`)**, at `λ = 2,000 RPS`, increasing latency `W` from `0.005s` to `0.8s` jumps concurrent in-flight requests `L` from **10** to **1,600** instantaneously! Even though downstream returns `200 OK`, all upstream worker threads/goroutines and DB connections are pinned waiting on sockets, cascading timeouts across unrelated endpoints. Mitigate with: (1) **Adaptive Concurrency Limits** (Vegas/Gradient algorithm shrinking concurrency when `RTT_observed > RTT_min`), (2) **Deadline Propagation** (passing remaining gRPC/HTTP timeout budget across hops so expired requests abort immediately), and (3) **LIFO Queue + CoDel Load Shedding** (serving freshest requests first during overload)."
-              }
+              { level: "FAILURE MODE", q: "What would make this result regress or the design fail at higher load?", a: failure },
+              { level: "VALIDATION", q: "How did you distinguish the effect of your change from noise or other releases?", a: validation }
             ],
-            mechanism: "Authentic Staff-level ownership of a resume achievement requires proving three layers: (1) **Root-Cause Physics** (identifying the exact CPU/memory/lock/network resource ceiling via flamegraphs, `perf`, `EXPLAIN (ANALYZE, BUFFERS)`, or `strace`), (2) **Mathematical Verification** (using Little's Law `L = λW`, Universal Scalability Law `C(N) = N / (1 + α(N-1) + βN(N-1))` modeling contention `α` and coherency `β`, and merged HDRHistograms), and (3) **Operational Resilience** (shadow parity verification, bounded queues, and adaptive load shedding).",
-            failures: "1. **Coordinated Omission in Load Tests**: Closed-loop benchmark tools hide stalls by backing off request injection when the server pauses.\n2. **Retry Storms Without Token Buckets**: Naive 3x exponential backoff retries multiply incoming load by 400% during a partial brownout; enforce a **Client-Side Adaptive Retry Budget** (e.g., max 10% of requests may be retries).",
-            codeBlueprint: `// Adaptive Concurrency Limiter (Gradient2 / Little's Law Protection Against Gray Failures)
-type GradientLimiter struct {
-    mu          sync.Mutex
-    limit       float64
-    minRTT      time.Duration
-    inFlight    int64
-}
+            mechanism: answer,
+            failures: failure,
+            codeBlueprint: `Claim: ${claim.text}\nEvidence: ${validation}\nRisk: ${failure}`,
+            l4Contrast: "Describe your direct contribution, the before/after behavior, and one limitation.",
+            l6Contrast: `${answer} Quantify the evidence, explain the trade-off, and state when the design would no longer be appropriate.`
+          });
+        };
 
-func (g *GradientLimiter) OnSample(rtt time.Duration) {
-    g.mu.Lock()
-    defer g.mu.Unlock()
-    if g.minRTT == 0 || rtt < g.minRTT {
-        g.minRTT = rtt
-    }
-    // Gradient = min_no_load_rtt / observed_rtt (drops < 1.0 when queues build up)
-    gradient := float64(g.minRTT) / float64(rtt)
-    if gradient < 0.75 {
-        g.limit = math.Max(10, g.limit*gradient) // Multiplicative decrease on queueing delay
-    } else {
-        g.limit = math.Min(1024, g.limit+1.0)    // Additive increase when queue is empty
-    }
-}`,
-            l4Contrast: "Repeats the resume bullet at a high level ('We added caching/indexing and latency dropped by 50%'). Cannot explain how p99 was measured, what the rollback plan was, or what happens during a gray failure.",
-            l6Contrast: "Breaks down exact instrumentation (merged histograms vs averaged percentiles), proves capacity via Little's Law & Universal Scalability Law, details shadow-read parity migration, and implements adaptive concurrency shedding."
-          };
-
-          generatedQuestions.push(bespokeQuestion);
-        }
+        addClaimQuestion(
+          "MECHANISM",
+          "Technical mechanism and design alternatives",
+          `For this resume claim — "${claim.text}" — explain how the system or change works end to end. Which ${skills.join(" / ")} mechanisms mattered, what alternatives did you evaluate, and what invariant did your design preserve?`,
+          `Start from the user or upstream request and trace the data/control path. Explain the ${skills.join(" / ")} behavior you relied on, the bottleneck it addressed, and the correctness or availability invariant preserved. Separate your contribution from surrounding team work.`,
+          "Identify the first resource or correctness limit at higher scale, describe the observable symptom, and explain the fallback or rollback that keeps the system safe.",
+          "Use a reproducible baseline and a representative workload; compare the relevant latency/throughput distribution and correctness counters, while controlling for traffic mix and concurrent releases."
+        );
+        addClaimQuestion(
+          "EVIDENCE",
+          claim.hasMetric ? `Metric proof and experiment design (${metricText})` : "Ownership proof and production validation",
+          claim.hasMetric
+            ? `Your resume reports ${metricText} in: "${claim.text}". Define the exact numerator, denominator, baseline window, workload, and percentile/measurement source. What changed in the system, and what counter-metric would reveal a regression?`
+            : `For "${claim.text}", identify the design decision you personally owned, the strongest alternative you rejected, and how you safely released and validated the change. What would you monitor to detect a regression?`,
+          claim.hasMetric
+            ? "State the metric definition and measurement source, compare equivalent baseline and post-change traffic, and use merged histograms or a well-defined aggregate for tail latency. Explain the bottleneck shift and identify a counter-metric."
+            : "Separate personal ownership from team delivery, state the alternatives and the invariant that selected the design, then describe a staged rollout with observable success and rollback criteria.",
+          "Beware of coordinated omission, changing traffic mix, averaged percentiles, selection bias, and a secondary bottleneck that makes the headline metric look better while user experience worsens.",
+          "Reproduce the change with an agreed workload and time window, check statistical variability, compare user-facing and resource metrics, and verify correctness plus rollback behavior."
+        );
       });
 
       // Ensure if focusMode filters apply, we keep relevant ones (or all if filter would empty list)
@@ -1173,7 +1284,8 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
     function renderDossierView() {
       // 1. Detected Tech Stack Badges
       const badgesContainer = document.getElementById("detected-tech-badges");
-      document.getElementById("detected-tech-count").textContent = `${state.detectedTechs.length} STACK VECTORS DETECTED`;
+      document.getElementById("detected-tech-count").textContent = `${state.detectedTechs.length} detected`;
+      document.getElementById("extracted-claim-count").textContent = `${state.extractedClaims.length} claims`;
       badgesContainer.innerHTML = "";
       state.detectedTechs.forEach(t => {
         const span = document.createElement("span");
@@ -1226,7 +1338,8 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
       queueList.innerHTML = "";
 
       state.questions.forEach((q, idx) => {
-        if (filterText && !q.title.toLowerCase().includes(filterText) && !q.domain.toLowerCase().includes(filterText) && !q.boundClaim.toLowerCase().includes(filterText)) {
+        const searchableQuestion = `${q.title} ${q.domain} ${q.boundClaim} ${q.prompt} ${q.signals.join(" ")}`.toLowerCase();
+        if (filterText && !searchableQuestion.includes(filterText)) {
           return;
         }
         const rec = state.practiceRecords[getQuestionRecordKey(q)];
@@ -1243,7 +1356,7 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
             <span>${escapeHtml(q.id)} // ${escapeHtml(q.domain.split(" ")[0])}</span>
             <span>[${statusTag}]</span>
           </div>
-          <div style="font-weight: 600; font-size: 13px; line-height: 1.35;">
+          <div class="q-index-item-title" style="font-weight: 600; font-size: 13px; line-height: 1.35;">
             ${escapeHtml(q.title)}
           </div>
         `;
@@ -1273,7 +1386,7 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
       followupsContainer.innerHTML = "";
       activeQ.followups.forEach((f, fIdx) => {
         const stepDiv = document.createElement("div");
-        stepDiv.className = "probe-step" + (fIdx === 0 ? " open" : "");
+        stepDiv.className = "probe-step";
         stepDiv.innerHTML = `
           <button type="button" class="probe-step-header">
             <span>${escapeHtml(f.level)}: ${escapeHtml(f.q)}</span>
@@ -1459,31 +1572,31 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
               <span class="stamp stamp-cobalt">${escapeHtml(q.domain)}</span>
               <span class="stamp">${escapeHtml(status.toUpperCase())}</span>
             </div>
-            <div style="display: flex; gap: 8px;">
+            <h3 class="compendium-card-title">${escapeHtml(q.title)}</h3>
+            <div class="compendium-card-actions">
               <button type="button" class="btn btn-sm compendium-practice-btn" data-idx="${idx}">
-                PRACTICE IN SIMULATOR &rarr;
+                PRACTICE
               </button>
-              <button type="button" class="btn btn-sm compendium-toggle-ans-btn">
-                TOGGLE ANSWER DETAILS
+              <button type="button" class="btn btn-sm compendium-toggle-card-btn">
+                DETAILS
               </button>
             </div>
           </div>
-          <div class="panel-body">
+          <div class="panel-body hidden">
+            <p class="compendium-card-prompt">${escapeHtml(q.prompt)}</p>
             <div class="resume-claim-banner" style="margin-bottom: 12px;">
               <span class="font-mono-tech" style="font-size: 10.5px; font-weight: 700; color: var(--accent-vermilion);">BOUND RESUME CLAIM:</span>
               <span class="font-mono-tech" style="font-size: 12px;"> "${escapeHtml(q.boundClaim)}"</span>
             </div>
-            <h3 class="font-serif-editorial" style="font-size: 1.35rem; font-weight: 700; margin-bottom: 8px;">
-              ${escapeHtml(q.title)}
-            </h3>
-            <p style="font-size: 14.5px; margin-bottom: 12px;">${escapeHtml(q.prompt)}</p>
-
             <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px;">
               <span class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--ink-muted);">KEY TECHNICAL SIGNALS:</span>
               ${q.signals.map(s => `<span class="stamp">${escapeHtml(s)}</span>`).join("")}
             </div>
 
-            <div class="compendium-answer-body" style="border-top: 1.5px solid var(--border-strong); padding-top: 14px; display: flex; flex-direction: column; gap: 12px;">
+            <button type="button" class="btn btn-sm compendium-toggle-ans-btn" style="margin-bottom: 12px;">
+              REVEAL ANSWER &amp; FOLLOW-UPS
+            </button>
+            <div class="compendium-answer-body hidden" style="border-top: 1.5px solid var(--border-strong); padding-top: 14px; display: flex; flex-direction: column; gap: 12px;">
               <div>
                 <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--accent-cobalt); margin-bottom: 3px;">
                   [01 // CORE MECHANISM &amp; UNDER-THE-HOOD INTERNALS]
@@ -1524,9 +1637,16 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
           switchView("interrogation");
         });
 
+        const cardBody = card.querySelector(".panel-body");
+        card.querySelector(".compendium-toggle-card-btn").addEventListener("click", event => {
+          const isHidden = cardBody.classList.toggle("hidden");
+          event.currentTarget.textContent = isHidden ? "DETAILS" : "CLOSE";
+        });
+
         const ansBody = card.querySelector(".compendium-answer-body");
-        card.querySelector(".compendium-toggle-ans-btn").addEventListener("click", () => {
-          ansBody.classList.toggle("hidden");
+        card.querySelector(".compendium-toggle-ans-btn").addEventListener("click", event => {
+          const isHidden = ansBody.classList.toggle("hidden");
+          event.currentTarget.textContent = isHidden ? "REVEAL ANSWER & FOLLOW-UPS" : "HIDE ANSWER & FOLLOW-UPS";
         });
 
         container.appendChild(card);
@@ -1987,30 +2107,6 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
         renderInterrogationView();
       });
 
-      document.getElementById("btn-launch-interrogation").addEventListener("click", () => {
-        switchView("interrogation");
-      });
-
-      // Inject Custom Claim
-      document.getElementById("btn-inject-claim").addEventListener("click", () => {
-        const inp = document.getElementById("custom-claim-input");
-        const val = inp.value.trim();
-        if (!val) {
-          showToast("ENTER A RESUME CLAIM OR TECH TOPIC TO INJECT.");
-          return;
-        }
-        state.rawResumeText = `• ${val}\n` + state.rawResumeText;
-        rawTextarea.value = state.rawResumeText;
-        inp.value = "";
-        decompileResumeAndGenerateQuestions(state.rawResumeText);
-        savePersistedState();
-        updateTopTelemetryAndStats();
-        renderDossierView();
-        renderInterrogationView();
-        renderCompendiumView();
-        showToast("CLAIM INJECTED INTO RESUME BUFFER & PROBES RECOMPILED.");
-      });
-
       // Interrogation Room Controls
       document.getElementById("queue-search-input").addEventListener("input", () => {
         renderInterrogationView();
@@ -2186,10 +2282,16 @@ func (g *GradientLimiter) OnSample(rtt time.Duration) {
       document.getElementById("compendium-status-filter").addEventListener("change", renderCompendiumView);
 
       document.getElementById("btn-compendium-expand-all").addEventListener("click", () => {
+        document.querySelectorAll(".compendium-card .panel-body").forEach(el => el.classList.remove("hidden"));
+        document.querySelectorAll(".compendium-toggle-card-btn").forEach(el => { el.textContent = "CLOSE"; });
         document.querySelectorAll(".compendium-answer-body").forEach(el => el.classList.remove("hidden"));
+        document.querySelectorAll(".compendium-toggle-ans-btn").forEach(el => { el.textContent = "HIDE ANSWER & FOLLOW-UPS"; });
       });
       document.getElementById("btn-compendium-collapse-all").addEventListener("click", () => {
+        document.querySelectorAll(".compendium-card .panel-body").forEach(el => el.classList.add("hidden"));
+        document.querySelectorAll(".compendium-toggle-card-btn").forEach(el => { el.textContent = "DETAILS"; });
         document.querySelectorAll(".compendium-answer-body").forEach(el => el.classList.add("hidden"));
+        document.querySelectorAll(".compendium-toggle-ans-btn").forEach(el => { el.textContent = "REVEAL ANSWER & FOLLOW-UPS"; });
       });
 
       // Custom Question Drawer in Compendium

@@ -179,16 +179,13 @@
                     CLEAR BUFFER
                   </button>
                 </div>
-                <textarea id="resume-raw-textarea" class="textarea-field" rows="13" placeholder="Paste your full technical resume here (experience bullets, architecture metrics, tech stack, projects)..."></textarea>
+                <textarea id="resume-raw-textarea" class="textarea-field" rows="8" placeholder="Paste your full technical resume here (experience bullets, architecture metrics, tech stack, projects)..."></textarea>
               </div>
 
               <!-- Action Buttons -->
               <div style="display: flex; flex-wrap: wrap; gap: 10px;">
                 <button type="button" id="btn-compile-resume" class="btn btn-primary" style="flex: 1;">
                   COMPILE INTERROGATION DOSSIER &amp; GENERATE INTERVIEW &rarr;
-                </button>
-                <button type="button" id="btn-launch-interrogation" class="btn btn-vermilion">
-                  ENTER INTERROGATION ROOM
                 </button>
               </div>
             </div>
@@ -206,18 +203,13 @@
             </div>
             <div class="panel-body" style="display: flex; flex-direction: column; gap: 16px;">
               <!-- Detected Technologies Matrix -->
-              <div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                  <span class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase;">
-                    DETECTED TECHNOLOGIES &amp; INTERNAL PROBE TARGETS:
-                  </span>
-                  <span class="font-mono-tech" style="font-size: 11px; color: var(--ink-muted);" id="detected-tech-count">0 DETECTED</span>
-                </div>
+              <details class="dossier-details">
+                <summary><span id="detected-tech-count">0 DETECTED</span> · Detected technologies</summary>
                 <div id="detected-tech-badges" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
-              </div>
+              </details>
 
-              <section class="ats-panel" aria-labelledby="ats-heading">
-                <div class="ats-heading-row">
+              <details class="ats-panel" aria-labelledby="ats-heading">
+                <summary class="ats-heading-row">
                   <div>
                     <span class="font-mono-tech ats-kicker">LOCAL RESUME CHECK</span>
                     <h2 id="ats-heading" class="font-serif-editorial">ATS-friendly format review</h2>
@@ -226,40 +218,31 @@
                     <span id="ats-score" class="ats-score">--</span>
                     <span class="font-mono-tech">/ 100</span>
                   </div>
-                </div>
-                <p id="ats-summary" class="ats-summary">Upload or paste a resume, then compile it to see a role-specific review.</p>
-                <p class="ats-rubric">Score weights: contact 15 · headings 20 · role keywords 25 · metrics 15 · action verbs 10 · length 10 · plain structure 5.</p>
-                <div class="ats-results-grid">
-                  <div>
-                    <h3>Strengths</h3>
-                    <ul id="ats-strengths"></ul>
+                </summary>
+                <div class="ats-details-content">
+                  <p id="ats-summary" class="ats-summary">Upload or paste a resume, then compile it to see a role-specific review.</p>
+                  <p class="ats-rubric">Score weights: contact 15 · headings 20 · role keywords 25 · metrics 15 · action verbs 10 · length 10 · plain structure 5.</p>
+                  <div class="ats-results-grid">
+                    <div>
+                      <h3>Strengths</h3>
+                      <ul id="ats-strengths"></ul>
+                    </div>
+                    <div>
+                      <h3>Limitations &amp; fixes</h3>
+                      <ul id="ats-fixes"></ul>
+                    </div>
                   </div>
-                  <div>
-                    <h3>Limitations &amp; fixes</h3>
-                    <ul id="ats-fixes"></ul>
-                  </div>
+                  <p class="ats-disclaimer">Heuristic guidance only—not an official ETS or ATS score. Layout checks are limited to extracted text; your CV is analyzed locally in this browser.</p>
                 </div>
-                <p class="ats-disclaimer">Heuristic guidance only—not an official ETS or ATS score. Layout checks are limited to extracted text; your CV is analyzed locally in this browser.</p>
-              </section>
-
-              <!-- Custom Claim / Topic Injector -->
-              <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
-                <label for="custom-claim-input" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 6px;">
-                  INJECT SPECIFIC RESUME CLAIM OR TECHNOLOGY TO INTERROGATE:
-                </label>
-                <div style="display: flex; gap: 8px;">
-                  <input type="text" id="custom-claim-input" class="input-field" placeholder="e.g., Migrated auth service to Rust &amp; Redis cluster handling 45,000 RPS at p99 &lt; 8ms" />
-                  <button type="button" id="btn-inject-claim" class="btn btn-sm" style="white-space: nowrap;">
-                    + INJECT CLAIM
-                  </button>
-                </div>
-              </div>
+              </details>
 
               <!-- Extracted Verbatim Resume Claims Table -->
-              <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+              <details class="dossier-details">
+                <summary>Resume claims · <span id="extracted-claim-count">0 claims</span></summary>
+                <div style="padding-top: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                   <span class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase;">
-                    EXTRACTED RESUME CLAIMS &amp; LINKED INTERROGATION PROBES:
+                    LINKED INTERVIEW DRILLS:
                   </span>
                   <span class="font-mono-tech" style="font-size: 11px; color: var(--ink-secondary);">
                     CLICK ANY CLAIM TO JUMP TO ITS PROBE
@@ -278,7 +261,8 @@
                     <tbody id="extracted-claims-tbody"></tbody>
                   </table>
                 </div>
-              </div>
+                </div>
+              </details>
             </div>
           </section>
         </div>
@@ -301,7 +285,7 @@
           <div style="padding: 10px 12px; border-bottom: 1px solid var(--border-strong); background-color: var(--bg-primary);">
             <input type="text" id="queue-search-input" class="input-field" style="padding: 6px 9px; font-size: 11.5px;" placeholder="Filter probes by tech or topic..." />
           </div>
-          <div id="interrogation-queue-list" style="max-height: 680px; overflow-y: auto;"></div>
+          <div id="interrogation-queue-list" class="q-index-list" style="max-height: 680px; overflow-y: auto;"></div>
         </aside>
 
         <!-- Main Interrogation Stage -->
