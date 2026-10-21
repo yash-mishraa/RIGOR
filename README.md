@@ -4,6 +4,14 @@ RIGOR is a browser-based technical interview practice and resume review workbenc
 
 ## Architecture and current workflow
 
+```mermaid
+flowchart LR
+  Browser[Vanilla JS + Vite] -->|REST; explicit resume match only| API[FastAPI]
+  Browser -->|local workbench + resume parsing| Local[Browser storage]
+  API -->|SQLAlchemy async| DB[(PostgreSQL + Alembic)]
+  API -->|optional, bounded requests| AI[OpenAI API]
+```
+
 - **Frontend:** vanilla JavaScript ES modules, static HTML, and CSS served by Vite. Resume PDF/DOCX parsing loads browser libraries from public CDNs. Practice records and the current resume buffer remain in browser local storage.
 - **Backend:** Python 3.12+, FastAPI, Pydantic request validation, SQLAlchemy async sessions, PostgreSQL, and Alembic. `src/api.js` is the dedicated frontend API client; the current interface degrades gracefully while the API is offline.
 - **Database:** companies, jobs and version history, canonical skills/aliases and role mappings, reusable questions and role/skill mappings, skill-linked learning modules, resumes and evidence, preparation plans, persisted plan items, sessions, and responses. `0002_content_engine` and `0003_personalised_practice` are additive; applied migrations are not edited.
@@ -13,7 +21,7 @@ RIGOR is a browser-based technical interview practice and resume review workbenc
 - **Resume matching:** PDF, DOCX, TXT, and Markdown extraction remains in the browser. Matching sends the text to the configured RIGOR backend for transient deterministic analysis; it is not written to the database or sent to an AI provider. Evidence distinguishes demonstrated action-oriented lines from keyword-only mentions.
 - **Practice lifecycle:** practice sessions, text responses, evaluations, progress, and the unanswered queue persist in PostgreSQL. Assessment modes hide references before submission. Local feedback is a keyword heuristic; optional AI feedback is approximate and requires a checkbox for each answer. Generated questions remain pending review until explicitly approved.
 - **Curated catalogue:** 46 reviewed practice questions map to 10 role families; 12 reusable learning modules cover high-value shared skills. The content is authored for RIGOR and is not represented as employer-sourced interview questions. Current mapped question counts are backend 23, data analyst 10, data engineer 13, distributed systems 12, frontend 11, ML engineer 7, platform/DevOps 13, QA automation 12, security 7, and systems 9. A question can map to multiple families. This is below the 300–500 target; expand the seed with similarly validated entries.
-- **Next steps:** improve reviewed content breadth; add authentication, per-user ownership, retention/deletion controls, and secured question review before public deployment. Add semantic resume matching only behind explicit consent and tests.
+- **Project scope:** RIGOR is a portfolio project and public demonstration, not a production SaaS. Login, signup, roles, and multi-tenant accounts are intentionally excluded. Remaining launch work is demo-state isolation, bounded public writes, safe catalogue administration, reproducible deployment, and end-to-end UI validation. See the prioritized list below and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Run locally
 
@@ -52,6 +60,8 @@ uv run uvicorn app.main:app --reload --port 8000
 
 AI stays disabled with the checked-in `.env.example`. To enable OpenAI, set `AI_PROVIDER=openai`, choose `AI_MODEL`, and set `OPENAI_API_KEY` in the private backend environment; the key is only read by backend settings. No key is required for startup, tests, resume matching, catalogue browsing, or local practice. The adapter uses structured outputs, a 30-second timeout, zero SDK retries, at most five generated questions per request, a configurable 3,000-token output ceiling, and a local per-process limit of 10 AI requests per minute. Usage logs include token counts when the provider reports them. Optional input/output per-million-token rates can produce an explicitly estimated cost; the rates are operator supplied and must be checked against current pricing. Readiness reports configuration only and does not test provider connectivity.
 
+`QUESTION_REVIEW_TOKEN` is an optional backend-only operator capability for approving or rejecting generated questions. With no token configured, review is disabled. Never expose it in browser variables or commit its value.
+
 Seed reviewed questions, learning modules, canonical aliases, and role-skill mappings without adding fictional jobs:
 
 ```sh
@@ -78,7 +88,7 @@ This local database has 10 such demonstration listings. They are not live vacanc
 - `POST /api/v1/jobs/{job_id}/analyse` with `{"use_ai": true}` explicitly requests provider-assisted analysis; results are cached by job description version, provider, and model. Transient provider failures return deterministic analysis; provider authentication/model configuration errors return a clear 503.
 - `POST /api/v1/resumes/analyse` with `resume_text` returns transient structured evidence and does not persist the resume.
 - `POST /api/v1/resume-job-matches` with `job_id` and `resume_text` returns evidence-backed strengths, gaps, project connections, and study priorities; it does not call an external AI provider.
-- `POST /api/v1/jobs/{job_id}/generate-questions` with optional `max_questions` (1–5) generates only for uncovered skills. Drafts are duplicate-checked, cached, tagged `ai_generated`, and stay `generated_pending_review` until approved through `POST /api/v1/questions/{question_id}/review` with `{"decision":"approve"}` or rejected.
+- `POST /api/v1/jobs/{job_id}/generate-questions` with optional `max_questions` (1–5) generates only for uncovered skills. Drafts are duplicate-checked, cached, tagged `ai_generated`, and stay `generated_pending_review` and are excluded from the shared reviewed catalogue until an operator approves them through `POST /api/v1/questions/{question_id}/review` with `{"decision":"approve"}` and the backend-only `X-Review-Token` capability. With no `QUESTION_REVIEW_TOKEN` configured, review is disabled.
 - `POST /api/v1/preparation-plans` with `job_id` and optional `question_limit` (1–50); `GET /api/v1/preparation-plans/{plan_id}`
 - `POST /api/v1/practice-sessions` with a `plan_id` and mode (`guided_practice`, `technical_mock`, `resume_deep_dive`, or `behavioral`); `GET /api/v1/practice-sessions/{session_id}` resumes the current question; `POST /api/v1/practice-sessions/{session_id}/responses` saves/evaluates an answer; `POST .../{session_id}/next` retrieves the current state; `GET .../{session_id}/results` returns feedback and a weak-skill revision queue.
 - `GET /api/v1/questions?q=retry&role_family=backend&skill=Python&category=api_design&difficulty=intermediate&limit=30&offset=0`; `GET /api/v1/questions/{question_id}`
@@ -90,11 +100,11 @@ Frontend API base defaults to `http://127.0.0.1:8000/api/v1`; configure `VITE_AP
 
 ## Privacy, security, and deployment limits
 
-There is no authentication, tenant ownership, or authorization yet. Imported job descriptions, plans, sessions, and answers are shared in the configured database; the question-review endpoint is also unauthenticated. Do not expose the API publicly until authentication, per-user ownership checks, review permissions, rate limits, privacy/retention controls, and production secrets are implemented. Resume text is sent to the configured RIGOR backend only when the user requests matching; it is not saved or sent to an LLM. If AI answer feedback is checked, the submitted answer is sent to the configured provider. Job source URLs are metadata and are not fetched server-side. File uploads and external job ingestion are not implemented. CORS is restricted to configured origins.
+RIGOR intentionally has no accounts, login, roles, or tenant model. A shared demonstration database therefore must contain fictional/sample data only until per-browser demo-state isolation and public write limits are complete. Imported job descriptions, plans, sessions, and candidate answers currently share the configured database. Generated questions stay pending and hidden from the reviewed catalogue; operator review requires the backend-only `QUESTION_REVIEW_TOKEN`. Do not expose the current write-enabled API as an unrestricted public demo until demo isolation, non-AI API abuse controls, and catalogue write boundaries are implemented. Resume text is sent to the configured RIGOR backend only when the user requests matching; it is not saved or sent to an LLM. If AI answer feedback is checked, the submitted answer is sent to the configured provider. Job source URLs are metadata and are not fetched server-side. File uploads and external job ingestion are not implemented. CORS is restricted to configured origins and does not provide access control.
 
-The Vite frontend can be deployed to Vercel, but the FastAPI service and PostgreSQL must be hosted separately and `VITE_API_BASE_URL` set to that service. Because authentication and ownership controls are not yet implemented, keep this backend private/local; a public multi-user Vercel deployment is not ready.
+The Vite frontend is configured for Vercel. The simplest currently documented backend path is a separate FastAPI host plus managed PostgreSQL, with `VITE_API_BASE_URL` set to the service. Vercel’s Python Functions runtime can run FastAPI, but this app also needs persistent external PostgreSQL and must be adapted and verified for serverless execution; this repository does not yet ship that adapter. Deployment is not yet verified end to end. The intended public release is a limited portfolio demo with fictional data, not a public multi-user SaaS or a place to submit sensitive resumes.
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for controlled hosting, migration, health check, backup/rollback, and route ownership guidance. The image uses the committed `backend/uv.lock`; build it with `backend/` as the Docker context. Request bodies are capped at 200 KB by default. The per-process AI limiter is not a distributed public abuse control.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for frontend/backend/database deployment guidance, migration, health check, and rollback. The image uses the committed `backend/uv.lock`; build it with `backend/` as the Docker context. Request bodies are capped at 200 KB by default. The per-process AI limiter is not a distributed public abuse control.
 
 ## Verification
 
@@ -131,3 +141,12 @@ For the PostgreSQL integration test, point the test explicitly at a local test d
 ```sh
 RIGOR_TEST_DATABASE_URL='postgresql+asyncpg://rigor:rigor@localhost:5432/rigor' uv run pytest app/tests -q
 ```
+
+
+## What works and what remains
+
+- **Implemented:** reviewed question and learning catalogues, deterministic job analysis and ranking, preparation plans, resume evidence matching (transient), persistent practice sessions, deterministic answer feedback, optional structured OpenAI job analysis/question generation/answer feedback, generated-question draft state, health/readiness routes, and offline quality fixtures.
+- **Deterministic fallback:** job extraction, resume matching, question planning, and answer feedback remain available without OpenAI. AI-specific analysis, generation, and feedback report when unavailable instead of silently switching providers.
+- **Not complete for a public demo:** per-browser isolation/reset of persisted demo progress; non-AI write abuse limits and safe boundaries for public job imports; seeded reviewed demo jobs/modules and a sample resume-match walkthrough in the UI; complete UI loading/error/navigation audit; live configured-provider validation; repeatable hosted deployment verification; screenshots/GIF.
+- **Required before launch:** finish those demo tasks, run the documented checks from a clean checkout, verify a real OpenAI smoke call with a private key, deploy frontend/backend/PostgreSQL, and verify the complete candidate flow with fictional data. Authentication and SaaS multi-tenancy are not launch requirements.
+- **Optional later:** broaden reviewed content while preserving quality; add semantic matching only if it improves evidence-backed matching and remains explicitly consented.

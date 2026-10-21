@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -11,7 +12,7 @@ from uuid import UUID, uuid4
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -721,8 +722,15 @@ async def get_question(question_id: UUID, session: AsyncSession = Depends(sessio
 async def review_generated_question(
     question_id: UUID,
     payload: QuestionReviewRequest,
+    x_review_token: str | None = Header(default=None),
     session: AsyncSession = Depends(session_dependency),
 ):
+    if not settings.question_review_token:
+        raise HTTPException(404, "Question review is not enabled")
+    if not x_review_token or not secrets.compare_digest(
+        x_review_token, settings.question_review_token
+    ):
+        raise HTTPException(403, "Question review capability is required")
     question = await session.get(Question, question_id)
     if question is None:
         raise HTTPException(404, "Question not found")

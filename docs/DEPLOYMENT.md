@@ -1,57 +1,55 @@
-# RIGOR controlled deployment guide
+# RIGOR portfolio demo deployment
 
-This guide prepares a private or controlled deployment. It does not provision infrastructure or deploy. **Do not enable public multi-user traffic until the ownership and authorization work below is complete.**
+RIGOR is a portfolio demonstration, not a production SaaS. The intended public demo uses fictional/sample content and does not ask visitors to create accounts or upload real resumes. Login, roles, and multi-tenant ownership are intentionally out of scope.
 
-## Current deployment boundary
+## Deployment shape
 
-The Vite frontend can be hosted as a static Vercel site. FastAPI and PostgreSQL run separately. The backend has no sign-in, tenant model, ownership enforcement, retention policy, or protected reviewer identity. Imported job descriptions, plans, sessions, and candidate answers are shared in the configured database. UUIDs are identifiers, not access control. Keep the API private behind an access-controlled network or gateway, and use synthetic data until the blockers are addressed.
+- **Frontend:** deploy the Vite static build from the repository root to Vercel (`npm ci`, `npm run build`, output `dist`, already configured in `vercel.json`). Set `VITE_API_BASE_URL` to the deployed API URL ending in `/api/v1`.
+- **Backend:** use a separate persistent FastAPI web service built from `backend/Dockerfile` with `backend/` as the Docker context. Run the image command with the host-provided port, for example `uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+- **Database:** use managed PostgreSQL with TLS and private networking from the backend where available. Set `DATABASE_URL` in the backend secret manager using SQLAlchemy async form (`postgresql+asyncpg://...`). Run `uv run alembic upgrade head` as the release migration command before serving traffic.
 
-Resume matching endpoints process submitted text transiently and do not store it. A legacy `Resume` table exists but current product routes do not write to it. Candidate answers and imported job descriptions are stored, and there is no user-facing deletion or retention implementation yet.
+Vercel's Python Functions runtime supports FastAPI, but is currently documented as beta. RIGOR's async database lifecycle, connection pooling, migrations, and request limits have only been validated in the container/long-running service shape; this repository does not include a Vercel Python function adapter or verify serverless database connection behavior. Keep the frontend on Vercel and backend/database separate for the first reproducible demo deployment. Re-evaluate the [Vercel Python runtime](https://vercel.com/docs/functions/runtimes/python) only after a deployment spike confirms those constraints.
 
-## Frontend (Vercel)
+A straightforward separate-host option is a Render web service plus Render Postgres; follow their current [FastAPI deployment](https://render.com/docs/deploy-fastapi) and [Postgres setup](https://render.com/docs/postgresql) documentation. This repository does not provision or verify a hosted environment yet.
 
-1. Import the repository with its root as the Vercel project root.
-2. Use `npm ci` for installation, `npm run build` for the build, and `dist` as the output directory (also recorded in `vercel.json`).
-3. Set `VITE_API_BASE_URL` to the HTTPS API base, including `/api/v1`, separately for production and preview environments.
-4. Never put `OPENAI_API_KEY`, database credentials, or backend secrets in a `VITE_*` variable. Vite embeds those values into downloadable JavaScript.
-5. Point preview deployments at a non-production API and database. Browser resume parsing libraries currently load from public CDNs; self-host them if your environment requires tighter supply-chain control.
+## Environment configuration
 
-## Backend and PostgreSQL
+Start from `.env.example` and configure backend values in the backend host's secret manager:
 
-1. Provision PostgreSQL with TLS, automated backups, restricted network access, and a dedicated least-privilege application role. Keep production credentials separate from local Compose defaults.
-2. Build the backend container with `backend/` as the Docker build context. The image uses committed `uv.lock` and installs the optional OpenAI extra. Do not copy `.env` into an image.
-3. Configure `DATABASE_URL` with the host's PostgreSQL connection string in SQLAlchemy async form (`postgresql+asyncpg://...`). Follow the provider's supported SSL options and use a connection pool that respects its connection limit.
-4. Set `CORS_ORIGINS` to an exact comma-separated list of deployed frontend origins. Do not use `*`. CORS is not authentication.
-5. Keep `AI_PROVIDER=none` until AI is intentionally enabled. To enable it, set `AI_PROVIDER=openai`, `AI_MODEL`, and `OPENAI_API_KEY` only in the backend secret manager. Set timeouts, output-token limits, and `AI_REQUESTS_PER_MINUTE` conservatively. Optional `AI_INPUT_COST_PER_MILLION_USD` and `AI_OUTPUT_COST_PER_MILLION_USD` are operator-supplied estimates; RIGOR labels the derived amount as an estimate. Verify current provider pricing before setting them.
-6. Release step: run `uv run alembic upgrade head` from the backend image/release command with the same database URL, then start `uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT` (or the platform equivalent). Do not use `--reload` in production. The current container default listens on 8000; configure the host to route to it.
-7. Set liveness to `GET /api/v1/health` (process only) and readiness to `GET /api/v1/ready` (database and current migration required). Readiness reports AI configuration only; it never calls OpenAI or claims provider reachability.
-8. Verify the deployed frontend URL, health/readiness, browser CORS preflight, and a non-sensitive catalogue read before directing controlled users to it. Do not use a live AI call as a health check.
+- `DATABASE_URL`: managed PostgreSQL URL.
+- `CORS_ORIGINS`: exact Vercel production origin(s); do not use `*`.
+- `AI_PROVIDER=none` by default. To enable the paid feature, set `AI_PROVIDER=openai`, `AI_MODEL`, and `OPENAI_API_KEY` on the backend only.
+- `AI_TIMEOUT_SECONDS`, `AI_MAX_GENERATION_BATCH`, `AI_MAX_OUTPUT_TOKENS`, and `AI_REQUESTS_PER_MINUTE`: conservative request bounds. The AI limiter is in-process and does not provide distributed abuse protection.
+- `QUESTION_REVIEW_TOKEN`: optional backend-only operator capability. Without it, generated-question review is disabled. Never place it in frontend variables.
+- `MAX_REQUEST_BYTES`: request-body cap; default is 200 KB.
+
+Never use a `VITE_*` variable for database credentials, the OpenAI key, or the review token. Vite publishes those values in browser JavaScript.
+
+## Release checks
+
+1. Seed reviewed content and fictional demo listings in the database. Use `uv run python -m app.seed --include-demo-jobs` only for explicitly fictional sample jobs; they are marked `DEMO`.
+2. Apply migrations with `uv run alembic upgrade head` and confirm `GET /api/v1/health` and `GET /api/v1/ready`.
+3. Set Vercel's `VITE_API_BASE_URL`, deploy the frontend, and verify CORS and catalogue reads from the deployed origin.
+4. Walk through job analysis, plan creation, resume matching with fictional text, practice response submission, and results. Test AI only when intentionally configured; the live smoke test costs a provider request.
+5. Confirm no real resumes or sensitive answers were used, no secrets are in frontend bundles/logs/Git, and the public write boundaries below are in place before opening the demo broadly.
+
+## Current public-demo boundary
+
+The API has no identity system by design. Job imports, preparation plans, practice sessions, and candidate answers are currently stored in a shared database. Resume matching itself is transient, but answer text is persisted. Current UI/local storage and backend data do not yet provide per-browser demo isolation or a reset action. The question review route is protected by the optional operator token, and generated drafts are hidden from the reviewed catalogue unless approved. CORS is not access control.
+
+**Do not open the current write-enabled API to unrestricted public traffic yet.** Before launch, complete these portfolio-demo safeguards (no accounts required):
+
+1. Seed reviewed sample jobs/questions/modules and a fictional resume-match walkthrough.
+2. Add an opaque per-browser demo session identifier and scope persisted plans, sessions, and answers to it; provide a reset that removes only that session's progress.
+3. Apply endpoint-specific non-AI request limits and maximum active/demo data quotas; make the public demo use seeded jobs and prevent arbitrary users from changing reviewed catalogue content.
+4. Confirm AI limits at the hosting edge or with another shared quota mechanism; the current in-process limiter is only a local safeguard.
+5. Add a clear demo privacy notice, short retention/reset policy, and UI states for unavailable AI/backend errors.
+6. Verify the hosted frontend, API, and database end to end using synthetic data and document the actual tested release setup.
+
+This is a small public-demo boundary, not a production identity or multi-user SaaS program. Do not collect real resume text or claim sensitive-workload readiness.
 
 ## Rollback and recovery
 
-- Take a managed database backup before a schema release and test restore procedures on a separate database.
-- Prefer forward-compatible additive migrations. Roll back the application image first if a release fails. Do not automatically downgrade a migration or delete tables containing user content.
-- Restore a database backup only through the host's documented recovery process and with an explicit recovery point decision. Preserve the failed release identifier and migration revision for diagnosis.
-- Keep frontend and backend release identifiers so Vercel and the API image can be rolled back independently.
-
-## Ownership and route access plan before public launch
-
-Identity must come from a verified authentication layer, not a caller-supplied user ID. Resolve the principal on every request; persist its stable subject on private rows; scope every read/write by that subject; and return 404 for objects outside the caller's ownership. Reviewer actions need an administrator/reviewer role and audit record. Add deletion/export and retention jobs before collecting real resumes or answers.
-
-| Data / routes | Intended classification | Required authorization after auth ships |
-| --- | --- | --- |
-| `GET /health`, `GET /ready` | Operational status | Public to platform probes; apply edge limits if exposed |
-| Curated `GET /questions`, `GET /questions/{id}`, `GET /learning-modules`, `GET /learning-modules/{id}` | Global reviewed catalog | Read-only; hide pending/rejected question states |
-| `GET /jobs`, `GET /jobs/{id}`, `/skills`, `/content-coverage` | Mixed catalog and user imports | Global only for curated/demo rows; private scope for user imports |
-| `POST /jobs/import`, `POST /jobs/{id}/analyse`, `/generate-questions` | User job content and derived AI data | Authenticated owner; private job ownership; AI abuse quota |
-| `POST /resume-job-matches`, `POST /resumes/analyse` | Transient resume content | Authenticated caller; explicit consent for external processing; never persist request text |
-| `POST /preparation-plans`, `GET /preparation-plans/{id}` | User preparation data | Plan owner and owned job; generated items must be reviewed |
-| `POST /practice-sessions`, `GET/POST /practice-sessions/{id}/*` | Private practice and candidate answers | Session owner through plan/job chain; restrict answer/evaluation reads to owner |
-| `POST /questions/{id}/review` | Global catalog mutation | Reviewer/admin role only; record reviewer, decision, and timestamp |
-
-Implementation tasks: add a principal abstraction and identity provider; add owner foreign keys and backfill existing rows in a controlled migration; create per-user access helpers and tests for every route above; make import deduplication tenant-scoped; protect generation/review operations; implement user deletion cascades/retention and export; then add distributed edge/API quotas and audit logs. Foreign keys alone do not enforce authorization.
-
-## Current controls and remaining blockers
-
-- Current controls: exact-origin CORS; bounded request body and field sizes; no server-side URL fetching; ORM-bound SQL; no file upload endpoint; transient resume matching; 30-second AI timeout; zero SDK retries; a per-process AI request limiter; Pydantic structured outputs; pending review for generated questions; privacy-allowlisted JSON logs.
-- Still required for public launch: authentication; ownership for imported jobs/plans/sessions/responses; reviewer authorization; retention/deletion and export; distributed abuse controls; production secrets and TLS; database backup/restore validation; security review of hosting proxy configuration. The in-process limiter is not shared across worker processes and is not a replacement for an edge/API gateway quota.
+- Enable the database provider's managed backups and test a restore on a separate database before launch.
+- Prefer additive, forward-compatible migrations. Roll back the app image first when possible; do not automatically downgrade or delete content tables.
+- Keep frontend and backend release identifiers so each can be rolled back independently.

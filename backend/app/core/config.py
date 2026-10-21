@@ -16,11 +16,17 @@ class Settings(BaseSettings):
     ai_requests_per_minute: int = Field(default=10, ge=1, le=120)
     ai_input_cost_per_million_usd: float | None = Field(default=None, ge=0)
     ai_output_cost_per_million_usd: float | None = Field(default=None, ge=0)
+    question_review_token: str | None = None
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("openai_api_key", mode="before")
     @classmethod
     def empty_api_key_is_unset(cls, value):
+        return None if value == "" else value
+
+    @field_validator("question_review_token", mode="before")
+    @classmethod
+    def empty_review_token_is_unset(cls, value):
         return None if value == "" else value
 
     @field_validator(

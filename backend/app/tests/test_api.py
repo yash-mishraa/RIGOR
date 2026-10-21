@@ -357,8 +357,22 @@ async def test_mock_provider_analysis_cache_and_targeted_generation(client, monk
     assert fake.generation_calls == 1
     generated_id = generated.json()["questions"][0]["id"]
     assert (await client.get(f"/api/v1/questions/{generated_id}")).status_code == 404
-    reviewed = await client.post(
+    import app.main as api
+
+    monkeypatch.setattr(api.settings, "question_review_token", None)
+    disabled = await client.post(
         f"/api/v1/questions/{generated_id}/review", json={"decision": "approve"}
+    )
+    assert disabled.status_code == 404
+    monkeypatch.setattr(api.settings, "question_review_token", "local-review-capability")
+    denied = await client.post(
+        f"/api/v1/questions/{generated_id}/review", json={"decision": "approve"}
+    )
+    assert denied.status_code == 403
+    reviewed = await client.post(
+        f"/api/v1/questions/{generated_id}/review",
+        json={"decision": "approve"},
+        headers={"X-Review-Token": "local-review-capability"},
     )
     assert reviewed.status_code == 200 and reviewed.json()["validation_status"] == "reviewed"
     question_detail = await client.get(f"/api/v1/questions/{generated_id}")

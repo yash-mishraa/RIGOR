@@ -2595,14 +2595,7 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         questionGenerationButton.disabled = true;
         try {
           const generated = await rigorApi.generateQuestions(selectedJobId, 3);
-          report.innerHTML = `<div class="job-detail-block"><div class="job-list-heading">${escapeHtml(generated.status.replaceAll("_", " ").toUpperCase())}</div><p>${escapeHtml(generated.message || "Generated questions are reusable but excluded from plans until reviewed.")}</p>${(generated.questions || []).map(question => `<details><summary>${escapeHtml(question.question)} · ${escapeHtml(question.validation_status || "")}</summary><p>${escapeHtml(question.reference_answer || "")}</p><p>${escapeHtml(question.rubric || "")}</p>${question.validation_status === "generated_pending_review" ? `<button type="button" class="btn btn-sm review-generated-question" data-question-id="${escapeHtml(question.id)}">APPROVE FOR REUSABLE PLANS</button>` : ""}</details>`).join("")}</div>`;
-          report.querySelectorAll(".review-generated-question").forEach(reviewButton => reviewButton.addEventListener("click", async () => {
-            reviewButton.disabled = true;
-            try {
-              await rigorApi.reviewGeneratedQuestion(reviewButton.dataset.questionId, "approve");
-              reviewButton.textContent = "APPROVED // REUSABLE";
-            } catch (error) { reviewButton.textContent = `REVIEW FAILED: ${error.message}`; reviewButton.disabled = false; }
-          }));
+          report.innerHTML = `<div class="job-detail-block"><div class="job-list-heading">${escapeHtml(generated.status.replaceAll("_", " ").toUpperCase())}</div><p>${escapeHtml(generated.message || "Generated questions remain private drafts and are excluded from reusable plans until an operator reviews them.")}</p>${(generated.questions || []).map(question => `<details><summary>${escapeHtml(question.question)} · ${escapeHtml(question.validation_status || "")}</summary><p>${escapeHtml(question.reference_answer || "")}</p><p>${escapeHtml(question.rubric || "")}</p></details>`).join("")}<p class="job-import-note">Generated drafts are not part of the shared reviewed catalogue.</p></div>`;
         } catch (error) { report.textContent = `Question generation unavailable: ${error.message}. Existing reviewed content is unchanged.`; }
         finally { questionGenerationButton.disabled = false; }
       });
