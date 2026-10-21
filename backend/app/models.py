@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -21,6 +22,21 @@ from app.core.database import Base
 
 def new_id():
     return uuid4()
+
+
+class DemoVisitorSession(Base):
+    __tablename__ = "demo_visitor_sessions"
+    id: Mapped[PyUUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RequestRateBucket(Base):
+    __tablename__ = "request_rate_buckets"
+    bucket_key: Mapped[str] = mapped_column(String(240), primary_key=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Company(Base):
@@ -44,10 +60,13 @@ class JobPost(Base):
     location: Mapped[str | None] = mapped_column(String(200), index=True)
     employment_type: Mapped[str | None] = mapped_column(String(80))
     source_url: Mapped[str | None] = mapped_column(String(2048))
-    normalized_source_url: Mapped[str | None] = mapped_column(String(2048), unique=True, index=True)
+    normalized_source_url: Mapped[str | None] = mapped_column(String(2048), index=True)
     source_type: Mapped[str] = mapped_column(String(40), default="user_import")
     status: Mapped[str] = mapped_column(String(24), default="active", index=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+    owner_session_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("demo_visitor_sessions.id", ondelete="CASCADE"), index=True
+    )
     responsibilities: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     qualifications: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     competencies: Mapped[list[str] | None] = mapped_column(JSON, default=list)
@@ -136,7 +155,7 @@ class JobSkill(Base):
 class Question(Base):
     __tablename__ = "questions"
     id: Mapped[PyUUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_id)
-    question_text: Mapped[str] = mapped_column(Text, unique=True)
+    question_text: Mapped[str] = mapped_column(Text)
     stable_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     question_type: Mapped[str] = mapped_column(String(40), default="technical")
     difficulty: Mapped[str] = mapped_column(String(24), default="intermediate")
@@ -152,6 +171,9 @@ class Question(Base):
     rubric: Mapped[str] = mapped_column(Text, default="")
     provenance: Mapped[str] = mapped_column(String(40), default="curated_practice")
     validation_status: Mapped[str] = mapped_column(String(30), default="reviewed")
+    owner_session_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("demo_visitor_sessions.id", ondelete="CASCADE"), index=True
+    )
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -263,6 +285,9 @@ class ContentGenerationRun(Base):
     model: Mapped[str | None] = mapped_column(String(120))
     input_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(30), default="not_requested")
+    owner_session_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("demo_visitor_sessions.id", ondelete="CASCADE"), index=True
+    )
     validation_metadata: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -274,6 +299,9 @@ class PreparationPlan(Base):
         ForeignKey("job_posts.id", ondelete="CASCADE"), index=True
     )
     resume_id: Mapped[PyUUID | None] = mapped_column(ForeignKey("resumes.id", ondelete="SET NULL"))
+    owner_session_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("demo_visitor_sessions.id", ondelete="CASCADE"), index=True
+    )
     status: Mapped[str] = mapped_column(String(24), default="active")
     content_coverage: Mapped[dict | None] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -284,6 +312,9 @@ class PracticeSession(Base):
     id: Mapped[PyUUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_id)
     plan_id: Mapped[PyUUID] = mapped_column(
         ForeignKey("preparation_plans.id", ondelete="CASCADE"), index=True
+    )
+    owner_session_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("demo_visitor_sessions.id", ondelete="CASCADE"), index=True
     )
     status: Mapped[str] = mapped_column(String(24), default="in_progress")
     mode: Mapped[str] = mapped_column(String(32), default="guided_practice")
@@ -299,9 +330,20 @@ class CandidateResponse(Base):
     session_id: Mapped[PyUUID] = mapped_column(
         ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True
     )
+    owner_session_id: Mapped[PyUUID | None] = mapped_column(
+        ForeignKey("demo_visitor_sessions.id", ondelete="CASCADE"), index=True
+    )
     question_id: Mapped[PyUUID] = mapped_column(ForeignKey("questions.id", ondelete="RESTRICT"))
     response_text: Mapped[str] = mapped_column(Text)
     evaluation: Mapped[dict | None] = mapped_column(JSON)
     evaluation_method: Mapped[str | None] = mapped_column(String(40))
-    submission_key: Mapped[str | None] = mapped_column(String(80), unique=True)
+    submission_key: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        Index(
+            "ix_candidate_responses_owner_submission_key",
+            "owner_session_id",
+            "submission_key",
+            unique=True,
+        ),
+    )

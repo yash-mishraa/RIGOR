@@ -1,13 +1,16 @@
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.config import settings
+from app.core.rate_limit import enforce_shared_limit
 from app.main import app, session_dependency
-from app.models import JobPost
+from app.models import DemoVisitorSession, JobPost, RequestRateBucket
 
 POSTGRES_URL = os.getenv("RIGOR_TEST_DATABASE_URL")
 
@@ -21,6 +24,7 @@ async def test_postgres_job_version_plan_and_cascade_cleanup():
     engine = create_async_engine(POSTGRES_URL)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     job_id = None
+    demo_id = None
 
     async def override_session():
         async with sessions() as session:
@@ -89,10 +93,34 @@ async def test_postgres_job_version_plan_and_cascade_cleanup():
             assert resumed.status_code == 200 and resumed.json()["position"] == 1
             results = await client.get(f"/api/v1/practice-sessions/{practice_id}/results")
             assert results.status_code == 200 and len(results.json()["responses"]) == 1
+            demo_cookie = client.cookies.get(settings.demo_cookie_name)
+            demo_id = UUID(demo_cookie.split(".", 1)[0]) if demo_cookie else uuid4()
+            async with sessions() as first_instance:
+                await enforce_shared_limit(first_instance, demo_id, "postgres-shared-test", 1)
+            async with sessions() as second_instance:
+                with pytest.raises(HTTPException) as limited:
+                    await enforce_shared_limit(
+                        second_instance, demo_id, "postgres-shared-test", 1
+                    )
+                assert limited.value.status_code == 429
+            reset = await client.post("/api/v1/demo/reset")
+            assert reset.status_code == 200
+            assert (await client.get(f"/api/v1/jobs/{job_id}")).status_code == 404
+            shared_jobs = await client.get("/api/v1/jobs", params={"limit": 1})
+            assert shared_jobs.status_code == 200
     finally:
         app.dependency_overrides.clear()
         if job_id:
             async with sessions() as session:
                 await session.execute(delete(JobPost).where(JobPost.id == job_id))
+                if demo_id:
+                    await session.execute(
+                        delete(DemoVisitorSession).where(DemoVisitorSession.id == demo_id)
+                    )
+                    await session.execute(
+                        delete(RequestRateBucket).where(
+                            RequestRateBucket.bucket_key.like(f"%{demo_id}%")
+                        )
+                    )
                 await session.commit()
         await engine.dispose()

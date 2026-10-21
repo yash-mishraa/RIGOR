@@ -3,11 +3,10 @@ import json
 import logging
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from time import monotonic
 from uuid import UUID, uuid4
 
 from alembic.config import Config
@@ -23,12 +22,14 @@ from sqlalchemy.orm import selectinload
 
 from app.ai import AIConfigurationError, AIProviderError, get_ai_provider
 from app.core.config import settings
-from app.core.database import SessionLocal, engine
+from app.core.database import engine, session_dependency
+from app.core.demo_sessions import demo_session_dependency, require_accessible_job
 from app.core.observability import configure_privacy_logging, request_id_context
+from app.core.rate_limit import enforce_shared_limit
 from app.models import (
     CandidateResponse,
-    Company,
     ContentGenerationRun,
+    DemoVisitorSession,
     JobPost,
     JobPostVersion,
     JobSkill,
@@ -177,10 +178,47 @@ class RequestGuardMiddleware:
 
 
 app.add_middleware(RequestGuardMiddleware, max_body_bytes=settings.max_request_bytes)
+
+
+class DemoCSRFMiddleware:
+    def __init__(self, app, allowed_origins: list[str], production: bool):
+        self.app = app
+        self.allowed_origins = set(allowed_origins)
+        self.production = production
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") not in {"POST", "PUT", "PATCH", "DELETE"}:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path.endswith("/review"):
+            await self.app(scope, receive, send)
+            return
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        origin = headers.get(b"origin", b"").decode("latin-1")
+        marker = headers.get(b"x-rigor-demo-request", b"").decode("latin-1")
+        blocked = (
+            (self.production and not origin)
+            or (origin and origin not in self.allowed_origins)
+            or ((origin or self.production) and marker != "1")
+        )
+        if blocked:
+            body = b'{"detail":"Browser request origin is not allowed"}'
+            await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(
+    DemoCSRFMiddleware,
+    allowed_origins=settings.allowed_origins,
+    production=settings.app_environment == "production",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
@@ -197,38 +235,96 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     return JSONResponse(status_code=422, content={"detail": details})
 
 
-_ai_request_windows: dict[str, deque[float]] = defaultdict(deque)
-
-
-def enforce_ai_rate_limit(request: Request) -> None:
-    if settings.ai_provider != "openai":
-        return
-    client_key = request.client.host if request.client else "unknown"
-    now = monotonic()
-    window = _ai_request_windows[client_key]
-    while window and window[0] <= now - 60:
-        window.popleft()
-    if len(window) >= settings.ai_requests_per_minute:
-        raise HTTPException(429, "AI request limit reached; try again later.")
-    window.append(now)
-    if len(_ai_request_windows) > 10_000:
-        stale = [
-            key
-            for key, events in _ai_request_windows.items()
-            if not events or events[-1] <= now - 60
-        ]
-        for key in stale:
-            _ai_request_windows.pop(key, None)
-
-
-async def session_dependency():
-    async with SessionLocal() as session:
-        yield session
-
-
 @app.get("/api/v1/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/demo/session")
+async def demo_session_status(visitor_id: UUID = Depends(demo_session_dependency)):
+    return {"status": "ready", "reset_available": True}
+
+
+@app.get("/api/v1/demo/progress")
+async def demo_progress(
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    rows = (
+        await session.execute(
+            select(PracticeSession, JobPost.role_title, JobPost.id)
+            .join(PreparationPlan, PreparationPlan.id == PracticeSession.plan_id)
+            .join(JobPost, JobPost.id == PreparationPlan.job_id)
+            .where(PracticeSession.owner_session_id == visitor_id)
+            .order_by(PracticeSession.started_at.desc())
+            .limit(10)
+        )
+    ).all()
+    plan_rows = (
+        await session.execute(
+            select(PreparationPlan, JobPost.role_title)
+            .join(JobPost, JobPost.id == PreparationPlan.job_id)
+            .where(PreparationPlan.owner_session_id == visitor_id)
+            .order_by(PreparationPlan.created_at.desc())
+            .limit(10)
+        )
+    ).all()
+    return {
+        "sessions": [
+            {
+                "id": str(practice.id),
+                "status": practice.status,
+                "mode": practice.mode,
+                "job_title": title,
+                "job_id": str(job_id),
+                "plan_id": str(practice.plan_id),
+                "started_at": practice.started_at.isoformat(),
+            }
+            for practice, title, job_id in rows
+        ],
+        "plans": [
+            {"id": str(plan.id), "job_id": str(plan.job_id), "job_title": title}
+            for plan, title in plan_rows
+        ],
+    }
+
+
+@app.post("/api/v1/demo/reset")
+async def reset_demo_progress(
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    owned_jobs = select(JobPost.id).where(JobPost.owner_session_id == visitor_id)
+    owned_plans = select(PreparationPlan.id).where(
+        PreparationPlan.owner_session_id == visitor_id
+    )
+    owned_questions = select(Question.id).where(Question.owner_session_id == visitor_id)
+    await session.execute(
+        delete(CandidateResponse).where(CandidateResponse.owner_session_id == visitor_id)
+    )
+    await session.execute(
+        delete(PracticeSession).where(PracticeSession.owner_session_id == visitor_id)
+    )
+    await session.execute(delete(PlanItem).where(PlanItem.plan_id.in_(owned_plans)))
+    await session.execute(
+        delete(PreparationPlan).where(PreparationPlan.owner_session_id == visitor_id)
+    )
+    await session.execute(delete(JobSkill).where(JobSkill.job_id.in_(owned_jobs)))
+    await session.execute(delete(JobPostVersion).where(JobPostVersion.job_id.in_(owned_jobs)))
+    await session.execute(delete(JobPost).where(JobPost.owner_session_id == visitor_id))
+    await session.execute(delete(QuestionSkill).where(QuestionSkill.question_id.in_(owned_questions)))
+    await session.execute(
+        delete(QuestionRoleFamily).where(QuestionRoleFamily.question_id.in_(owned_questions))
+    )
+    await session.execute(delete(Question).where(Question.owner_session_id == visitor_id))
+    await session.execute(
+        delete(ContentGenerationRun).where(ContentGenerationRun.owner_session_id == visitor_id)
+    )
+    visitor = await session.get(DemoVisitorSession, visitor_id)
+    if visitor:
+        visitor.last_reset_at = datetime.now(UTC)
+    await session.commit()
+    return {"status": "reset", "scope": "current_demo_session"}
 
 
 @app.get("/api/v1/ready")
@@ -291,9 +387,13 @@ async def list_jobs(
     sort: str = Query("recent", pattern="^(recent|relevance)$"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0, le=1000000),
+    visitor_id: UUID = Depends(demo_session_dependency),
     session: AsyncSession = Depends(session_dependency),
 ):
-    query = select(JobPost)
+    query = select(JobPost).where(
+        (JobPost.owner_session_id == visitor_id)
+        | (JobPost.owner_session_id.is_(None) & (JobPost.source_type != "user_import"))
+    )
     if status != "all":
         query = query.where(JobPost.status == status)
     if role_family:
@@ -361,14 +461,32 @@ async def list_jobs(
 
 @app.post("/api/v1/jobs/import")
 async def import_job(
-    payload: JobImport, response: Response, session: AsyncSession = Depends(session_dependency)
+    payload: JobImport,
+    response: Response,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
+    await enforce_shared_limit(
+        session, visitor_id, "job-import", settings.demo_imports_per_minute
+    )
+    import_count = await session.scalar(
+        select(func.count()).select_from(JobPost).where(JobPost.owner_session_id == visitor_id)
+    )
+    if import_count >= settings.demo_max_imported_jobs:
+        raise HTTPException(429, "Demo job limit reached; reset demo progress to continue.")
     profile = analyze_job(payload.role_title, payload.description)
     normalized_url = normalize_source_url(str(payload.source_url) if payload.source_url else None)
     company_name = payload.company_name.strip() if payload.company_name else None
     candidates_query = (
         select(JobPost)
         .where(
+            or_(
+                JobPost.owner_session_id == visitor_id,
+                and_(
+                    JobPost.owner_session_id.is_(None),
+                    JobPost.source_type != "user_import",
+                ),
+            ),
             or_(
                 and_(normalized_url is not None, JobPost.normalized_source_url == normalized_url),
                 and_(
@@ -398,23 +516,13 @@ async def import_job(
         description=payload.description,
         normalized_url=normalized_url,
     )
-    company = None
-    if company_name:
-        company = await session.scalar(
-            select(Company).where(func.lower(Company.name) == company_name.lower())
-        )
-        if company is None:
-            company = Company(name=company_name)
-            session.add(company)
-            await session.flush()
-
     is_new = duplicate is None
     changed = False
     if is_new:
         job = JobPost(
             role_title=payload.role_title,
             description=payload.description,
-            company=company,
+            company_id=None,
             company_name=company_name,
             location=payload.location or profile["location"],
             seniority=payload.seniority or profile["seniority"],
@@ -423,6 +531,7 @@ async def import_job(
             normalized_source_url=normalized_url,
             role_family=profile["role_family"],
             source_type="user_import",
+            owner_session_id=visitor_id,
             status="active",
             responsibilities=profile["responsibilities"],
             qualifications=profile["qualifications"],
@@ -437,14 +546,15 @@ async def import_job(
     else:
         job = await session.get(JobPost, duplicate["id"])
         assert job is not None
+        shared_catalogue_job = job.owner_session_id is None
         incoming_hash = job_fingerprint(payload.role_title, company_name, payload.description)
         current_hash = job_fingerprint(job.role_title, job.company_name, job.description)
-        changed = incoming_hash != current_hash
+        changed = incoming_hash != current_hash and not shared_catalogue_job
         version = job.content_version + 1 if changed else job.content_version
         if changed:
             job.role_title = payload.role_title
             job.description = payload.description
-            job.company = company
+            job.company_id = None
             job.company_name = company_name
             job.location = payload.location or profile["location"]
             job.seniority = payload.seniority or profile["seniority"]
@@ -457,10 +567,11 @@ async def import_job(
             job.content_version = version
             await session.execute(delete(JobSkill).where(JobSkill.job_id == job.id))
             await session.flush()
-        job.source_url = str(payload.source_url) if payload.source_url else job.source_url
-        job.normalized_source_url = normalized_url or job.normalized_source_url
-        job.last_verified_at = datetime.now(UTC)
-        job.status = "active"
+        if not shared_catalogue_job:
+            job.source_url = str(payload.source_url) if payload.source_url else job.source_url
+            job.normalized_source_url = normalized_url or job.normalized_source_url
+            job.last_verified_at = datetime.now(UTC)
+            job.status = "active"
 
     if is_new or changed:
         session.add(
@@ -476,9 +587,21 @@ async def import_job(
         await save_job_skills(session, job, profile)
 
     await session.flush()
-    plan = await latest_plan(session, job.id) if not changed else None
+    plan = await latest_plan(session, job.id, visitor_id) if not changed else None
     if plan is None:
-        plan_payload = await make_plan(session, job, PlanCreate(job_id=job.id), commit=False)
+        await enforce_shared_limit(
+            session, visitor_id, "preparation-plan", settings.demo_plans_per_minute
+        )
+        plan_count = await session.scalar(
+            select(func.count()).select_from(PreparationPlan).where(
+                PreparationPlan.owner_session_id == visitor_id
+            )
+        )
+        if plan_count >= settings.demo_max_plans:
+            raise HTTPException(429, "Demo preparation-plan limit reached; reset demo progress.")
+        plan_payload = await make_plan(
+            session, job, PlanCreate(job_id=job.id), visitor_id, commit=False
+        )
         plan = plan_payload["_plan"]
     await session.commit()
     await session.refresh(job)
@@ -494,49 +617,76 @@ async def import_job(
 
 
 @app.get("/api/v1/jobs/{job_id}")
-async def get_job(job_id: UUID, session: AsyncSession = Depends(session_dependency)):
-    job = await session.get(JobPost, job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
+async def get_job(
+    job_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    job = await require_accessible_job(session, job_id, visitor_id)
     return await job_payload(session, job, include_description=True)
 
 
 @app.get("/api/v1/jobs/{job_id}/skills")
-async def get_job_skills(job_id: UUID, session: AsyncSession = Depends(session_dependency)):
-    job = await session.get(JobPost, job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
+async def get_job_skills(
+    job_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    await require_accessible_job(session, job_id, visitor_id)
     rows = await job_skill_rows(session, job_id)
     return {"job_id": str(job_id), "items": [job_skill_payload(row) for row in rows]}
 
 
 @app.get("/api/v1/jobs/{job_id}/content-coverage")
-async def job_content_coverage(job_id: UUID, session: AsyncSession = Depends(session_dependency)):
-    job = await session.get(JobPost, job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
-    analysis = await rank_job_content(session, job)
+async def job_content_coverage(
+    job_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    job = await require_accessible_job(session, job_id, visitor_id)
+    analysis = await rank_job_content(session, job, owner_session_id=visitor_id)
     return {"job_id": str(job_id), "coverage": analysis["coverage"]}
 
 
 @app.post("/api/v1/jobs/{job_id}/analyse")
 async def analyse(
     job_id: UUID,
-    request: Request,
     payload: AnalyseRequest | None = None,
+    visitor_id: UUID = Depends(demo_session_dependency),
     session: AsyncSession = Depends(session_dependency),
 ):
-    job = await session.get(JobPost, job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
+    job = await require_accessible_job(session, job_id, visitor_id)
     profile = analyze_job(job.role_title, job.description)
     ai_status = "not_requested"
     if payload and payload.use_ai:
-        enforce_ai_rate_limit(request)
+        try:
+            await enforce_shared_limit(
+                session, visitor_id, "ai", settings.ai_requests_per_minute
+            )
+        except HTTPException as exc:
+            if exc.status_code != 429:
+                raise
+            return {
+                "job_id": str(job.id),
+                "analysis": profile,
+                "ai_status": "rate_limited_deterministic_fallback",
+                "ai_message": "AI request limit reached. Deterministic job analysis is shown.",
+                "content_coverage": (
+                    await rank_job_content(session, job, owner_session_id=visitor_id)
+                )["coverage"],
+            }
         try:
             provider = get_ai_provider()
-        except AIConfigurationError as exc:
-            raise HTTPException(503, str(exc)) from exc
+        except AIConfigurationError:
+            return {
+                "job_id": str(job.id),
+                "analysis": profile,
+                "ai_status": "not_configured_deterministic_fallback",
+                "ai_message": "AI is unavailable; deterministic job analysis is shown.",
+                "content_coverage": (
+                    await rank_job_content(session, job, owner_session_id=visitor_id)
+                )["coverage"],
+            }
         fingerprint = hashlib.sha256(
             f"job-analysis-v1:{job.content_version}:{description_hash(job.description)}:{provider.provider_name}:{provider.model_name}".encode()
         ).hexdigest()
@@ -550,8 +700,9 @@ async def analyse(
                 )
                 semantic = output.model_dump()
                 semantic["analysis_version"] = 1
-                job.ai_analysis = semantic
-                job.ai_analysis_fingerprint = fingerprint
+                if job.owner_session_id == visitor_id:
+                    job.ai_analysis = semantic
+                    job.ai_analysis_fingerprint = fingerprint
                 ai_status = "analyzed"
             except AIConfigurationError as exc:
                 raise HTTPException(503, str(exc)) from exc
@@ -561,7 +712,9 @@ async def analyse(
                     "analysis": profile,
                     "ai_status": "failed_deterministic_fallback",
                     "ai_message": "AI analysis failed. The deterministic profile is returned unchanged.",
-                    "content_coverage": (await rank_job_content(session, job))["coverage"],
+                    "content_coverage": (
+                        await rank_job_content(session, job, owner_session_id=visitor_id)
+                    )["coverage"],
                 }
         canonical = {
             alias.casefold(): item["name"]
@@ -625,14 +778,17 @@ async def analyse(
         profile["responsibilities"] = list(
             dict.fromkeys(profile.get("responsibilities", []) + supported_responsibilities)
         )[:30]
-        await session.execute(delete(JobSkill).where(JobSkill.job_id == job.id))
-        await save_job_skills(session, job, profile)
-        await session.commit()
+        if job.owner_session_id == visitor_id:
+            await session.execute(delete(JobSkill).where(JobSkill.job_id == job.id))
+            await save_job_skills(session, job, profile)
+            await session.commit()
     return {
         "job_id": str(job.id),
         "analysis": profile,
         "ai_status": ai_status,
-        "content_coverage": (await rank_job_content(session, job))["coverage"],
+        "content_coverage": (
+            await rank_job_content(session, job, owner_session_id=visitor_id)
+        )["coverage"],
     }
 
 
@@ -645,9 +801,13 @@ async def list_questions(
     difficulty: str | None = Query(None, pattern="^(beginner|intermediate|advanced)$"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0, le=1000000),
+    visitor_id: UUID = Depends(demo_session_dependency),
     session: AsyncSession = Depends(session_dependency),
 ):
-    query = select(Question).where(Question.validation_status == "reviewed")
+    query = select(Question).where(
+        Question.validation_status == "reviewed",
+        or_(Question.owner_session_id.is_(None), Question.owner_session_id == visitor_id),
+    )
     if q:
         query = query.where(Question.question_text.ilike(f"%{q.strip()}%"))
     if role_family:
@@ -703,14 +863,22 @@ async def list_questions(
 
 
 @app.get("/api/v1/questions/{question_id}")
-async def get_question(question_id: UUID, session: AsyncSession = Depends(session_dependency)):
+async def get_question(
+    question_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
     query = (
         select(Question)
         .options(
             selectinload(Question.skills).selectinload(QuestionSkill.skill),
             selectinload(Question.role_families),
         )
-        .where(Question.id == question_id, Question.validation_status == "reviewed")
+        .where(
+            Question.id == question_id,
+            Question.validation_status == "reviewed",
+            or_(Question.owner_session_id.is_(None), Question.owner_session_id == visitor_id),
+        )
     )
     question = await session.scalar(query)
     if question is None:
@@ -806,20 +974,37 @@ async def get_learning_module(module_id: UUID, session: AsyncSession = Depends(s
 
 @app.post("/api/v1/preparation-plans", status_code=201)
 async def create_preparation_plan(
-    payload: PlanCreate, session: AsyncSession = Depends(session_dependency)
+    payload: PlanCreate,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
-    job = await session.get(JobPost, payload.job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
-    result = await make_plan(session, job, payload, commit=False)
+    await enforce_shared_limit(session, visitor_id, "preparation-plan", settings.demo_plans_per_minute)
+    plan_count = await session.scalar(
+        select(func.count()).select_from(PreparationPlan).where(
+            PreparationPlan.owner_session_id == visitor_id
+        )
+    )
+    if plan_count >= settings.demo_max_plans:
+        raise HTTPException(429, "Demo preparation-plan limit reached; reset demo progress.")
+    job = await require_accessible_job(session, payload.job_id, visitor_id)
+    result = await make_plan(session, job, payload, visitor_id, commit=False)
     await session.commit()
     await session.refresh(result["_plan"])
     return await plan_payload_for(session, result["_plan"], job)
 
 
 @app.get("/api/v1/preparation-plans/{plan_id}")
-async def get_plan(plan_id: UUID, session: AsyncSession = Depends(session_dependency)):
-    plan = await session.get(PreparationPlan, plan_id)
+async def get_plan(
+    plan_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    plan = await session.scalar(
+        select(PreparationPlan).where(
+            PreparationPlan.id == plan_id,
+            PreparationPlan.owner_session_id == visitor_id,
+        )
+    )
     if plan is None:
         raise HTTPException(404, "Preparation plan not found")
     job = await session.get(JobPost, plan.job_id)
@@ -835,9 +1020,8 @@ async def save_job_skills(session: AsyncSession, job: JobPost, profile: dict):
         for evidence in profile[key]:
             skill = await session.scalar(select(Skill).where(Skill.name == evidence["name"]))
             if skill is None:
-                skill = Skill(name=evidence["name"], category=evidence["category"])
-                session.add(skill)
-                await session.flush()
+                # Public job imports may link only to the operator-seeded shared taxonomy.
+                continue
             session.add(
                 JobSkill(
                     job=job,
@@ -974,12 +1158,23 @@ def module_payload(module: LearningModule):
     }
 
 
-async def rank_job_content(session: AsyncSession, job: JobPost, question_limit: int = 50):
+async def rank_job_content(
+    session: AsyncSession,
+    job: JobPost,
+    question_limit: int = 50,
+    owner_session_id: UUID | None = None,
+):
     skill_rows = await job_skill_rows(session, job.id)
     required = {r.skill.name for r in skill_rows if r.requirement_type == "required"}
     preferred = {r.skill.name for r in skill_rows if r.requirement_type == "preferred"}
     all_skill_ids = [r.skill_id for r in skill_rows]
-    question_query = select(Question).where(Question.validation_status == "reviewed")
+    question_query = select(Question).where(
+        Question.validation_status == "reviewed",
+        or_(
+            Question.owner_session_id.is_(None),
+            Question.owner_session_id == owner_session_id,
+        ),
+    )
     if all_skill_ids:
         question_query = question_query.where(
             or_(
@@ -1067,9 +1262,22 @@ async def rank_job_content(session: AsyncSession, job: JobPost, question_limit: 
     }
 
 
-async def make_plan(session: AsyncSession, job: JobPost, request: PlanCreate, commit: bool = True):
-    analysis = await rank_job_content(session, job, request.question_limit)
-    plan = PreparationPlan(job_id=job.id, status="active", content_coverage=analysis["coverage"])
+async def make_plan(
+    session: AsyncSession,
+    job: JobPost,
+    request: PlanCreate,
+    owner_session_id: UUID,
+    commit: bool = True,
+):
+    analysis = await rank_job_content(
+        session, job, request.question_limit, owner_session_id=owner_session_id
+    )
+    plan = PreparationPlan(
+        job_id=job.id,
+        owner_session_id=owner_session_id,
+        status="active",
+        content_coverage=analysis["coverage"],
+    )
     session.add(plan)
     await session.flush()
     position = 1
@@ -1106,10 +1314,13 @@ async def make_plan(session: AsyncSession, job: JobPost, request: PlanCreate, co
     return {"_plan": plan, "analysis": analysis}
 
 
-async def latest_plan(session: AsyncSession, job_id: UUID):
+async def latest_plan(session: AsyncSession, job_id: UUID, owner_session_id: UUID):
     return await session.scalar(
         select(PreparationPlan)
-        .where(PreparationPlan.job_id == job_id)
+        .where(
+            PreparationPlan.job_id == job_id,
+            PreparationPlan.owner_session_id == owner_session_id,
+        )
         .order_by(PreparationPlan.created_at.desc())
         .limit(1)
     )
@@ -1122,7 +1333,9 @@ async def plan_payload_for(session: AsyncSession, plan: PreparationPlan, job: Jo
         )
     ).all()
     if not items:
-        analysis = await rank_job_content(session, job)
+        analysis = await rank_job_content(
+            session, job, owner_session_id=plan.owner_session_id
+        )
         question_items = analysis["questions"]
         learning_modules = analysis["learning_modules"]
         coverage = plan.content_coverage or analysis["coverage"]
@@ -1192,7 +1405,12 @@ async def plan_payload_for(session: AsyncSession, plan: PreparationPlan, job: Jo
 
 
 @app.post("/api/v1/resumes/analyse")
-async def analyse_resume(payload: ResumeAnalysisRequest):
+async def analyse_resume(
+    payload: ResumeAnalysisRequest,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
+):
+    await enforce_shared_limit(session, visitor_id, "resume-analysis", 10)
     # Resume text is processed transiently and is never stored or logged.
     return {
         "profile": extract_resume_evidence(payload.resume_text),
@@ -1203,11 +1421,12 @@ async def analyse_resume(payload: ResumeAnalysisRequest):
 
 @app.post("/api/v1/resume-job-matches")
 async def resume_job_match(
-    payload: ResumeJobMatchRequest, session: AsyncSession = Depends(session_dependency)
+    payload: ResumeJobMatchRequest,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
-    job = await session.get(JobPost, payload.job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
+    await enforce_shared_limit(session, visitor_id, "resume-match", 10)
+    job = await require_accessible_job(session, payload.job_id, visitor_id)
     rows = await job_skill_rows(session, job.id)
     required = [row.skill.name for row in rows if row.requirement_type == "required"]
     preferred = [row.skill.name for row in rows if row.requirement_type == "preferred"]
@@ -1224,14 +1443,12 @@ async def resume_job_match(
 @app.post("/api/v1/jobs/{job_id}/generate-questions")
 async def generate_targeted_questions(
     job_id: UUID,
-    request: Request,
     payload: GenerateQuestionsRequest,
+    visitor_id: UUID = Depends(demo_session_dependency),
     session: AsyncSession = Depends(session_dependency),
 ):
-    job = await session.get(JobPost, job_id)
-    if job is None:
-        raise HTTPException(404, "Job not found")
-    analysis = await rank_job_content(session, job)
+    job = await require_accessible_job(session, job_id, visitor_id)
+    analysis = await rank_job_content(session, job, owner_session_id=visitor_id)
     coverage = analysis["coverage"]
     gaps = (
         coverage["required_skills_without_questions"]
@@ -1243,11 +1460,26 @@ async def generate_targeted_questions(
             "questions": [],
             "message": "Existing reviewed questions already cover the identified job skills.",
         }
-    enforce_ai_rate_limit(request)
+    try:
+        await enforce_shared_limit(session, visitor_id, "ai", settings.ai_requests_per_minute)
+    except HTTPException as exc:
+        if exc.status_code != 429:
+            raise
+        return {
+            "status": "ai_rate_limited",
+            "questions": [],
+            "uncovered_skills": gaps,
+            "message": "AI request limit reached. Use the existing reviewed questions and learning modules for these gaps.",
+        }
     try:
         provider = get_ai_provider()
-    except AIConfigurationError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    except AIConfigurationError:
+        return {
+            "status": "ai_unavailable",
+            "questions": [],
+            "uncovered_skills": gaps,
+            "message": "AI is unavailable. The reviewed question bank and learning modules remain available.",
+        }
     limit = min(payload.max_questions, settings.ai_max_generation_batch, 5)
     fingerprint = hashlib.sha256(
         f"question-generation-v1:{job.content_version}:{provider.provider_name}:{provider.model_name}:{','.join(sorted(gaps))}:{limit}".encode()
@@ -1258,6 +1490,7 @@ async def generate_targeted_questions(
             ContentGenerationRun.input_fingerprint == fingerprint,
             ContentGenerationRun.content_type == "targeted_questions",
             ContentGenerationRun.status == "generated_pending_review",
+            ContentGenerationRun.owner_session_id == visitor_id,
         )
         .order_by(ContentGenerationRun.created_at.desc())
     )
@@ -1282,7 +1515,18 @@ async def generate_targeted_questions(
             ],
             "uncovered_skills": gaps,
         }
-    existing_texts = list((await session.scalars(select(Question.question_text))).all())
+    existing_texts = list(
+        (
+            await session.scalars(
+                select(Question.question_text).where(
+                    or_(
+                        Question.owner_session_id.is_(None),
+                        Question.owner_session_id == visitor_id,
+                    )
+                )
+            )
+        ).all()
+    )
     reusable_questions = [
         {"question": item["question"], "skills": item["skills"], "category": item["category"]}
         for item in analysis["questions"][:8]
@@ -1294,12 +1538,13 @@ async def generate_targeted_questions(
     context = f"Role: {job.role_title}; role family: {job.role_family}; responsibilities: {job.responsibilities or []}; description: {job.description[:4000]}; already available practice questions: {reusable_questions}; reusable learning modules: {reusable_modules}"
     try:
         output = await provider.generate_questions(context, gaps, limit)
-    except AIConfigurationError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    except AIProviderError as exc:
-        raise HTTPException(
-            502, "Question generation failed; existing preparation content remains available"
-        ) from exc
+    except (AIConfigurationError, AIProviderError):
+        return {
+            "status": "ai_unavailable",
+            "questions": [],
+            "uncovered_skills": gaps,
+            "message": "Question generation was unavailable. No generated content was saved; reviewed preparation content remains available.",
+        }
     skill_rows = (await session.scalars(select(Skill))).all()
     skill_by_name = {row.name.casefold(): row for row in skill_rows}
     skill_by_alias = dict(skill_by_name)
@@ -1338,9 +1583,9 @@ async def generate_targeted_questions(
         ):
             rejected_count += 1
             continue
-        stable_key = (
-            "ai-" + hashlib.sha256(candidate.question_text.casefold().encode()).hexdigest()[:40]
-        )
+        stable_key = "ai-" + hashlib.sha256(
+            f"{visitor_id}:{candidate.question_text.casefold()}".encode()
+        ).hexdigest()[:40]
         question = Question(
             stable_key=stable_key,
             question_text=candidate.question_text,
@@ -1355,6 +1600,7 @@ async def generate_targeted_questions(
             rubric=candidate.rubric,
             provenance="ai_generated",
             validation_status="generated_pending_review",
+            owner_session_id=visitor_id,
             version=1,
         )
         question.skills = [QuestionSkill(skill=skill_by_name[name.casefold()]) for name in names]
@@ -1370,6 +1616,7 @@ async def generate_targeted_questions(
         model=provider.model_name,
         input_fingerprint=fingerprint,
         status=run_status,
+        owner_session_id=visitor_id,
         validation_metadata="\n".join(q.stable_key for q in created),
     )
     session.add(run)
@@ -1461,9 +1708,26 @@ async def _session_payload(session: AsyncSession, practice: PracticeSession):
 
 @app.post("/api/v1/practice-sessions", status_code=201)
 async def start_practice_session(
-    payload: PracticeSessionCreate, session: AsyncSession = Depends(session_dependency)
+    payload: PracticeSessionCreate,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
-    plan = await session.get(PreparationPlan, payload.plan_id)
+    await enforce_shared_limit(
+        session, visitor_id, "practice-session", settings.demo_sessions_per_minute
+    )
+    practice_count = await session.scalar(
+        select(func.count()).select_from(PracticeSession).where(
+            PracticeSession.owner_session_id == visitor_id
+        )
+    )
+    if practice_count >= settings.demo_max_practice_sessions:
+        raise HTTPException(429, "Demo practice-session limit reached; reset demo progress.")
+    plan = await session.scalar(
+        select(PreparationPlan).where(
+            PreparationPlan.id == payload.plan_id,
+            PreparationPlan.owner_session_id == visitor_id,
+        )
+    )
     if plan is None:
         raise HTTPException(404, "Preparation plan not found")
     items = (
@@ -1516,6 +1780,7 @@ async def start_practice_session(
         )
     practice = PracticeSession(
         plan_id=plan.id,
+        owner_session_id=visitor_id,
         mode=payload.mode,
         question_queue=qids,
         current_position=0,
@@ -1529,9 +1794,16 @@ async def start_practice_session(
 
 @app.get("/api/v1/practice-sessions/{session_id}")
 async def get_practice_session(
-    session_id: UUID, session: AsyncSession = Depends(session_dependency)
+    session_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
-    practice = await session.get(PracticeSession, session_id)
+    practice = await session.scalar(
+        select(PracticeSession).where(
+            PracticeSession.id == session_id,
+            PracticeSession.owner_session_id == visitor_id,
+        )
+    )
     if practice is None:
         raise HTTPException(404, "Practice session not found")
     return await _session_payload(session, practice)
@@ -1539,9 +1811,16 @@ async def get_practice_session(
 
 @app.post("/api/v1/practice-sessions/{session_id}/next")
 async def next_practice_question(
-    session_id: UUID, session: AsyncSession = Depends(session_dependency)
+    session_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
-    practice = await session.get(PracticeSession, session_id)
+    practice = await session.scalar(
+        select(PracticeSession).where(
+            PracticeSession.id == session_id,
+            PracticeSession.owner_session_id == visitor_id,
+        )
+    )
     if practice is None:
         raise HTTPException(404, "Practice session not found")
     return await _session_payload(session, practice)
@@ -1552,17 +1831,35 @@ async def submit_practice_response(
     session_id: UUID,
     request: Request,
     payload: PracticeResponseCreate,
+    visitor_id: UUID = Depends(demo_session_dependency),
     session: AsyncSession = Depends(session_dependency),
 ):
+    await enforce_shared_limit(
+        session, visitor_id, "practice-response", settings.demo_responses_per_minute
+    )
+    ai_rate_limited = False
+    if payload.allow_ai_evaluation:
+        try:
+            await enforce_shared_limit(session, visitor_id, "ai", settings.ai_requests_per_minute)
+        except HTTPException as exc:
+            if exc.status_code != 429:
+                raise
+            ai_rate_limited = True
     practice = await session.scalar(
-        select(PracticeSession).where(PracticeSession.id == session_id).with_for_update()
+        select(PracticeSession)
+        .where(
+            PracticeSession.id == session_id,
+            PracticeSession.owner_session_id == visitor_id,
+        )
+        .with_for_update()
     )
     if practice is None:
         raise HTTPException(404, "Practice session not found")
     if payload.submission_key:
         prior = await session.scalar(
             select(CandidateResponse).where(
-                CandidateResponse.submission_key == payload.submission_key
+                CandidateResponse.submission_key == payload.submission_key,
+                CandidateResponse.owner_session_id == visitor_id,
             )
         )
         if prior:
@@ -1573,6 +1870,13 @@ async def submit_practice_response(
             }
     if practice.status != "in_progress":
         raise HTTPException(409, "Practice session is already complete")
+    response_count = await session.scalar(
+        select(func.count()).select_from(CandidateResponse).where(
+            CandidateResponse.owner_session_id == visitor_id
+        )
+    )
+    if response_count >= settings.demo_max_answers:
+        raise HTTPException(429, "Demo answer limit reached; reset demo progress.")
     queue = practice.question_queue or []
     if practice.current_position >= len(queue):
         practice.status = "completed"
@@ -1592,8 +1896,11 @@ async def submit_practice_response(
     expected = question.expected_points.splitlines()
     evaluation = fallback_evaluate(expected, question.rubric, payload.answer)
     method = "deterministic_keyword_heuristic"
-    if payload.allow_ai_evaluation:
-        enforce_ai_rate_limit(request)
+    if payload.allow_ai_evaluation and ai_rate_limited:
+        evaluation["provider_notice"] = (
+            "AI request limit reached; deterministic rubric feedback was saved instead."
+        )
+    elif payload.allow_ai_evaluation:
         try:
             provider = get_ai_provider()
             ai_result = await provider.evaluate_answer(
@@ -1607,10 +1914,10 @@ async def submit_practice_response(
                 raise AIProviderError("AI evaluation evidence was not grounded in the answer")
             evaluation = ai_result.model_dump() | {"method": "ai_rubric", "approximate": True}
             method = "ai_rubric"
-        except AIConfigurationError as exc:
-            if settings.ai_provider == "openai":
-                raise HTTPException(503, str(exc)) from exc
-            evaluation["provider_notice"] = "AI is disabled; the local rubric heuristic was used."
+        except AIConfigurationError:
+            evaluation["provider_notice"] = (
+                "AI is not configured; deterministic rubric feedback was saved instead."
+            )
         except AIProviderError:
             evaluation["provider_notice"] = (
                 "AI evaluation was unavailable; the local rubric heuristic was used."
@@ -1621,6 +1928,7 @@ async def submit_practice_response(
     )
     response_row = CandidateResponse(
         session_id=practice.id,
+        owner_session_id=visitor_id,
         question_id=question.id,
         response_text=payload.answer,
         evaluation=evaluation,
@@ -1684,9 +1992,16 @@ async def submit_practice_response(
 
 @app.get("/api/v1/practice-sessions/{session_id}/results")
 async def practice_session_results(
-    session_id: UUID, session: AsyncSession = Depends(session_dependency)
+    session_id: UUID,
+    visitor_id: UUID = Depends(demo_session_dependency),
+    session: AsyncSession = Depends(session_dependency),
 ):
-    practice = await session.get(PracticeSession, session_id)
+    practice = await session.scalar(
+        select(PracticeSession).where(
+            PracticeSession.id == session_id,
+            PracticeSession.owner_session_id == visitor_id,
+        )
+    )
     if practice is None:
         raise HTTPException(404, "Practice session not found")
     rows = (

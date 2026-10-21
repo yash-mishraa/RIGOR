@@ -6,7 +6,7 @@ import types
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
-from starlette.requests import Request
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.ai import (
     AIConfigurationError,
@@ -16,8 +16,9 @@ from app.ai import (
     OpenAIProvider,
 )
 from app.core.config import Settings, settings
+from app.core.database import Base
+from app.core.rate_limit import enforce_shared_limit
 from app.evaluations.run_quality import DATASET, run
-from app.main import enforce_ai_rate_limit
 
 
 def test_ai_configuration_status_never_requires_or_displays_key(monkeypatch):
@@ -120,25 +121,22 @@ def test_openai_provider_errors_are_sanitized(
     assert "never-print-this" not in str(caught.value)
 
 
-def test_ai_request_rate_limit_is_per_client_and_window(monkeypatch):
-    import app.main as api
+@pytest.mark.asyncio
+async def test_shared_rate_limit_is_persisted_and_scoped_to_demo_session(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'limits.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    from uuid import uuid4
 
-    api._ai_request_windows.clear()
-    monkeypatch.setattr(settings, "ai_provider", "openai")
-    monkeypatch.setattr(settings, "ai_requests_per_minute", 1)
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/ai",
-            "headers": [],
-            "client": ("198.51.100.7", 1234),
-        }
-    )
-    enforce_ai_rate_limit(request)
-    with pytest.raises(HTTPException) as caught:
-        enforce_ai_rate_limit(request)
-    assert caught.value.status_code == 429
+    visitor_a, visitor_b = uuid4(), uuid4()
+    async with factory() as session:
+        await enforce_shared_limit(session, visitor_a, "ai", 1)
+        with pytest.raises(HTTPException) as caught:
+            await enforce_shared_limit(session, visitor_a, "ai", 1)
+        assert getattr(caught.value, "status_code", None) == 429
+        await enforce_shared_limit(session, visitor_b, "ai", 1)
+    await engine.dispose()
 
 
 def test_synthetic_fixture_has_five_fictional_roles():

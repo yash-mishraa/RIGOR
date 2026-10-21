@@ -2385,6 +2385,10 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       const aiAnalysisButton = document.getElementById("btn-ai-job-analysis");
       const resumeMatchButton = document.getElementById("btn-match-resume");
       const questionGenerationButton = document.getElementById("btn-generate-questions");
+      const demoProgressStatus = document.getElementById("demo-progress-status");
+      const resetDemoButton = document.getElementById("btn-reset-demo-progress");
+      const sampleResumeButton = document.getElementById("btn-load-demo-resume");
+      const sampleResume = `Jordan Example\nSoftware Engineer | Fictional portfolio candidate\n\nExperience\n- Built Python REST APIs with PostgreSQL persistence and automated tests for a fictional learning platform.\n- Added request validation and database transactions, reducing duplicate writes in a simulated service.\n\nProjects\n- Created a Docker-based local development environment and CI checks for a sample web application.\n- Practiced observability and incident response using synthetic service metrics.\n\nSkills: Python, PostgreSQL, REST APIs, Docker, testing, Git`;
       let pageOffset = 0;
       let pageLimit = 8;
       let selectedJobId = null;
@@ -2405,7 +2409,7 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         catalogueCount.textContent = "LOADING JOB CATALOGUE…";
         try {
           const page = await rigorApi.listJobs(currentFilters());
-          catalogueCount.textContent = `${page.total} JOB${page.total === 1 ? "" : "SAVED"} // PAGE ${Math.floor(pageOffset / pageLimit) + 1}`;
+          catalogueCount.textContent = `${page.total} DEMO + PRIVATE JOB${page.total === 1 ? "" : "S"} // PAGE ${Math.floor(pageOffset / pageLimit) + 1}`;
           catalogue.innerHTML = page.items.length ? page.items.map(job =>
             `<button type="button" class="job-list-button" data-job-id="${escapeHtml(job.id)}"><strong>${escapeHtml(job.role_title)}${job.is_demo ? " · DEMO" : ""}</strong><span>${escapeHtml(job.company_name || "Company not specified")} · ${escapeHtml(job.role_family.replaceAll("_", " "))}${job.seniority ? ` · ${escapeHtml(job.seniority)}` : ""}</span><span>${escapeHtml([...(job.required_skills || []), ...(job.preferred_skills || [])].join(", ") || "No recognized skill tags")}</span></button>`
           ).join("") : `<p class="job-import-note">No matching jobs. Import a description below or clear the filters.</p>`;
@@ -2414,6 +2418,17 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           });
           previous.disabled = pageOffset === 0;
           next.disabled = page.next_offset === null;
+          if (!selectedJobId) {
+            const preferredId = localStorage.getItem("rigor.demo.jobId");
+            const preferredOnPage = page.items.find(job => job.id === preferredId);
+            const firstDemo = page.items.find(job => job.is_demo);
+            const candidate = preferredOnPage || firstDemo || page.items[0];
+            if (preferredId) {
+              try { await selectJob(preferredId); }
+              catch { localStorage.removeItem("rigor.demo.jobId"); }
+            }
+            if (!selectedJobId && candidate) await selectJob(candidate.id);
+          }
         } catch (error) {
           catalogueCount.textContent = "CATALOGUE UNAVAILABLE";
           catalogue.innerHTML = `<p class="job-import-note">${escapeHtml(error.message)}. Browser-based practice remains available.</p>`;
@@ -2430,6 +2445,7 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
 
       async function selectJob(jobId) {
         selectedJobId = jobId;
+        localStorage.setItem("rigor.demo.jobId", jobId);
         generatePlan.disabled = true;
         status.textContent = "LOADING JOB PROFILE AND CONTENT COVERAGE…";
         try {
@@ -2443,7 +2459,21 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           aiAnalysisButton.disabled = false;
           resumeMatchButton.disabled = false;
           questionGenerationButton.disabled = false;
+          const savedPlanId = localStorage.getItem("rigor.demo.planId");
+          if (savedPlanId) {
+            try {
+              const savedPlan = await rigorApi.getPlan(savedPlanId);
+              if (savedPlan.job_id === job.id) renderPlan(savedPlan);
+            } catch {
+              localStorage.removeItem("rigor.demo.planId");
+              localStorage.removeItem("rigor.demo.sessionId");
+              localStorage.removeItem("rigor.demo.sessionPlanId");
+            }
+          }
         } catch (error) {
+          selectedJobId = null;
+          generatePlan.disabled = true;
+          localStorage.removeItem("rigor.demo.jobId");
           status.textContent = `COULD NOT LOAD JOB: ${error.message}`;
         }
       }
@@ -2471,6 +2501,7 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       }
 
       function renderPlan(plan) {
+        localStorage.setItem("rigor.demo.planId", plan.id);
         const modules = plan.learning_modules || [];
         const questions = plan.questions || plan.modules?.[1]?.questions || [];
         const categories = [...new Set(questions.map(question => question.category).filter(Boolean))];
@@ -2487,7 +2518,9 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         }).join("");
         const filters = questions.length ? `<div class="job-catalogue-filters"><div><label for="plan-question-search" class="font-mono-tech">FILTER QUESTIONS</label><input id="plan-question-search" class="select-field" placeholder="Question text or skill" /></div><div><label for="plan-question-category" class="font-mono-tech">CATEGORY</label><select id="plan-question-category" class="select-field"><option value="">All categories</option>${categoryOptions}</select></div><div><label for="plan-question-difficulty" class="font-mono-tech">DIFFICULTY</label><select id="plan-question-difficulty" class="select-field"><option value="">All levels</option><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></div></div>` : "";
         result.innerHTML = `<div class="job-analysis-card"><div class="job-list-heading">PREPARATION PLAN // ${questions.length} QUESTIONS // ${modules.length} LEARNING MODULES</div><div class="practice-launcher"><label for="practice-mode-select">PRACTICE MODE</label><select class="select-field" id="practice-mode-select"><option value="guided_practice">Guided practice</option><option value="technical_mock">Technical mock interview</option><option value="resume_deep_dive">Resume deep dive</option><option value="behavioral">Behavioural interview</option></select><button type="button" class="btn btn-primary" id="btn-start-practice" ${questions.length ? "" : "disabled"}>START PERSISTED PRACTICE</button><button type="button" class="btn btn-sm" id="btn-resume-practice" hidden>RESUME SAVED SESSION</button><p class="job-import-note">Answers use a local heuristic by default. To request AI feedback, explicitly consent after a question is shown; the submitted answer is then sent to the configured provider.</p></div><div id="practice-session-panel" aria-live="polite"></div><h4>Recommended learning</h4>${moduleCards || "<p>No reviewed learning modules currently match this job's skills.</p>"}<h4>Ranked practice questions</h4>${filters}${questionCards || "<p>No reviewed questions match the available job skills. See uncovered skills above.</p>"}</div>`;
-        const savedSessionId = localStorage.getItem("rigor.activePracticeSession");
+        const savedSessionId = localStorage.getItem("rigor.demo.sessionPlanId") === plan.id
+          ? localStorage.getItem("rigor.demo.sessionId")
+          : null;
         const resumeButton = document.getElementById("btn-resume-practice");
         if (savedSessionId) {
           resumeButton.hidden = false;
@@ -2500,7 +2533,8 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
           event.currentTarget.disabled = true;
           try {
             const practice = await rigorApi.startSession(plan.id, document.getElementById("practice-mode-select").value);
-            localStorage.setItem("rigor.activePracticeSession", practice.id);
+            localStorage.setItem("rigor.demo.sessionId", practice.id);
+            localStorage.setItem("rigor.demo.sessionPlanId", practice.plan_id);
             renderPracticeSession(practice);
           } catch (error) {
             document.getElementById("practice-session-panel").textContent = error.message;
@@ -2588,6 +2622,11 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         } catch (error) { report.textContent = `Local match failed: ${error.message}`; }
         finally { resumeMatchButton.disabled = false; }
       });
+      sampleResumeButton.addEventListener("click", () => {
+        document.getElementById("resume-raw-textarea").value = sampleResume;
+        demoProgressStatus.textContent = "Fictional resume example loaded. Select a sample job, then run the transient match.";
+        if (selectedJobId) resumeMatchButton.click();
+      });
       questionGenerationButton.addEventListener("click", async () => {
         if (!selectedJobId) return;
         const report = document.getElementById("generated-question-report");
@@ -2601,6 +2640,23 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
       });
 
       try {
+        await rigorApi.demoSession();
+        const savedProgress = await rigorApi.demoProgress();
+        const latestSession = savedProgress.sessions?.[0];
+        const latestPlan = savedProgress.plans?.[0];
+        if (latestSession) {
+          localStorage.setItem("rigor.demo.jobId", latestSession.job_id);
+          localStorage.setItem("rigor.demo.planId", latestSession.plan_id);
+          localStorage.setItem("rigor.demo.sessionId", latestSession.id);
+          localStorage.setItem("rigor.demo.sessionPlanId", latestSession.plan_id);
+          demoProgressStatus.textContent = `Private progress found: ${latestSession.job_title} · ${latestSession.status.replaceAll("_", " ")}. Select the job to resume.`;
+        } else if (latestPlan) {
+          localStorage.setItem("rigor.demo.jobId", latestPlan.job_id);
+          localStorage.setItem("rigor.demo.planId", latestPlan.id);
+          demoProgressStatus.textContent = `Private preparation plan ready to resume: ${latestPlan.job_title}.`;
+        } else {
+          demoProgressStatus.textContent = "Your private demo session is ready. Choose a DEMO role to begin.";
+        }
         const health = await rigorApi.health();
         status.textContent = `BACKEND ${health.status.toUpperCase()} // DATABASE ${health.database.toUpperCase()}`;
         await loadCatalogue();
@@ -2609,6 +2665,27 @@ nr_periods 14200 | nr_throttled 9810 | throttled_usec 842100000 (GOMAXPROCS=64 o
         catalogueCount.textContent = "JOB CATALOGUE OFFLINE";
         catalogue.innerHTML = `<p class="job-import-note">Start the backend and apply migrations to browse or import jobs.</p>`;
       }
+      resetDemoButton.addEventListener("click", async () => {
+        resetDemoButton.disabled = true;
+        demoProgressStatus.textContent = "Resetting only this browser session…";
+        try {
+          await rigorApi.resetDemo();
+          ["rigor.demo.jobId", "rigor.demo.planId", "rigor.demo.sessionId", "rigor.demo.sessionPlanId", "rigor.activePracticeSession"].forEach(key => localStorage.removeItem(key));
+          state.practiceRecords = {};
+          savePersistedState();
+          selectedJobId = null;
+          document.getElementById("job-preparation-results").innerHTML = "";
+          document.getElementById("job-selected-details").innerHTML = "";
+          document.getElementById("job-content-coverage").innerHTML = "";
+          document.getElementById("resume-job-match-report").innerHTML = "";
+          demoProgressStatus.textContent = "This browser session's jobs, plans, practice answers, and evaluations were reset. Shared sample content is unchanged.";
+          await loadCatalogue();
+        } catch (error) {
+          demoProgressStatus.textContent = `Could not reset demo progress: ${error.message}`;
+        } finally {
+          resetDemoButton.disabled = false;
+        }
+      });
       ["job-search-input", "job-skill-filter"].forEach(id => document.getElementById(id).addEventListener("input", () => {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => { pageOffset = 0; loadCatalogue(); }, 250);

@@ -12,6 +12,7 @@ from app.models import (
     QuestionSkill,
     Skill,
 )
+from app.taxonomy import SKILL_TAXONOMY
 
 
 @pytest.fixture
@@ -21,9 +22,13 @@ async def client(tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        python = Skill(name="Python", category="programming")
-        session.add(python)
+        skills = {
+            item["name"]: Skill(name=item["name"], category=item["category"])
+            for item in SKILL_TAXONOMY
+        }
+        session.add_all(skills.values())
         await session.flush()
+        python = skills["Python"]
         question = Question(
             stable_key="test-python-api",
             question_text="How would you structure validation and persistence in a Python API endpoint?",
@@ -132,6 +137,65 @@ async def test_import_creates_versioned_job_and_persisted_personalized_plan(clie
 
 
 @pytest.mark.asyncio
+async def test_demo_session_ownership_and_reset_are_isolated(client):
+    imported = await client.post(
+        "/api/v1/jobs/import",
+        json={
+            "role_title": "Private Demo Backend Engineer",
+            "description": "Required skills include Python and PostgreSQL. " * 6,
+        },
+    )
+    assert imported.status_code == 201, imported.text
+    job = imported.json()
+    plan_id = job["preparation_plan"]["id"]
+    practice = await client.post(
+        "/api/v1/practice-sessions",
+        json={"plan_id": plan_id, "mode": "guided_practice"},
+    )
+    assert practice.status_code == 201, practice.text
+
+    from httpx import AsyncClient
+
+    visitor_b = AsyncClient(
+        transport=client._transport,
+        base_url="http://test",
+    )
+    try:
+        assert (await visitor_b.get("/api/v1/demo/session")).status_code == 200
+        assert (await visitor_b.get(f"/api/v1/jobs/{job['id']}")).status_code == 404
+        assert (await visitor_b.get(f"/api/v1/preparation-plans/{plan_id}")).status_code == 404
+        assert (
+            await visitor_b.get(f"/api/v1/practice-sessions/{practice.json()['id']}")
+        ).status_code == 404
+        reset = await visitor_b.post("/api/v1/demo/reset")
+        assert reset.status_code == 200
+        assert (await client.get(f"/api/v1/jobs/{job['id']}")).status_code == 200
+        assert (await client.get(f"/api/v1/preparation-plans/{plan_id}")).status_code == 200
+        assert (
+            await client.get(f"/api/v1/practice-sessions/{practice.json()['id']}")
+        ).status_code == 200
+    finally:
+        await visitor_b.aclose()
+
+    reset = await client.post("/api/v1/demo/reset")
+    assert reset.status_code == 200
+    assert (await client.get(f"/api/v1/jobs/{job['id']}")).status_code == 404
+    assert (await client.get(f"/api/v1/preparation-plans/{plan_id}")).status_code == 404
+    assert (await client.get("/api/v1/questions")).status_code == 200
+    assert (await client.get("/api/v1/learning-modules")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_unsafe_cross_origin_request_without_demo_marker_is_rejected(client):
+    response = await client.post(
+        "/api/v1/jobs/import",
+        headers={"Origin": "https://attacker.invalid"},
+        json={"role_title": "Backend", "description": "Required skills: Python. " * 8},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_catalogue_filters_and_question_module_endpoints(client):
     imported = await client.post(
         "/api/v1/jobs/import",
@@ -236,7 +300,7 @@ async def test_practice_session_persists_answers_hides_references_and_resumes(cl
 
 
 @pytest.mark.asyncio
-async def test_ai_job_analysis_requires_explicit_provider_configuration(client):
+async def test_ai_job_analysis_uses_deterministic_result_without_provider(client):
     imported = await client.post(
         "/api/v1/jobs/import",
         json={
@@ -247,7 +311,9 @@ async def test_ai_job_analysis_requires_explicit_provider_configuration(client):
     response = await client.post(
         f"/api/v1/jobs/{imported.json()['id']}/analyse", json={"use_ai": True}
     )
-    assert response.status_code == 503
+    assert response.status_code == 200
+    assert response.json()["ai_status"] == "not_configured_deterministic_fallback"
+    assert response.json()["analysis"]["required_skills"]
 
 
 @pytest.mark.asyncio

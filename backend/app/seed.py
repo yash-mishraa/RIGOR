@@ -278,10 +278,12 @@ async def seed_catalogue(include_demo_jobs: bool = False):
 async def main():
     parser = argparse.ArgumentParser(description="Seed RIGOR's reviewed content catalogue.")
     parser.add_argument(
-        "--include-demo-jobs", action="store_true", help="Add clearly labeled fictional listings."
+        "--without-demo-jobs",
+        action="store_true",
+        help="Seed reviewed questions and learning modules but omit fictional demo jobs.",
     )
     args = parser.parse_args()
-    result = await seed_catalogue(include_demo_jobs=args.include_demo_jobs)
+    result = await seed_catalogue(include_demo_jobs=not args.without_demo_jobs)
     print(result)
 
 

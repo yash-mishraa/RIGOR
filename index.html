@@ -146,9 +146,15 @@
 
               <section class="job-import-card" aria-labelledby="job-import-heading">
                 <div class="panel-title" id="job-import-heading">[SEC-1B] JOB-SPECIFIC PREPARATION</div>
-                <p class="job-import-note">Paste a job description to save its structured profile and match it to reusable practice questions. Your existing local resume workflow remains private to this browser.</p>
+                <div class="job-detail-block" aria-label="RIGOR public portfolio demo">
+                  <div class="job-list-heading">TRY THE FICTIONAL PORTFOLIO DEMO</div>
+                  <p>Choose a clearly labelled sample role to explore skill matching, reviewed questions, learning modules, and practice. Demo progress is private to this browser session.</p>
+                  <div id="demo-progress-status" class="job-import-note" aria-live="polite">Preparing your private demo session…</div>
+                  <button type="button" class="btn btn-sm" id="btn-reset-demo-progress">RESET DEMO PROGRESS</button>
+                </div>
+                <p class="job-import-note">Or paste a job description to analyse and save it to your private demo session. Your existing local resume workflow remains private to this browser.</p>
                 <div class="job-catalogue-controls">
-                  <label for="job-search-input" class="font-mono-tech">SEARCH SAVED JOBS</label>
+                  <label for="job-search-input" class="font-mono-tech">SEARCH DEMO JOBS + YOUR IMPORTS</label>
                   <input id="job-search-input" class="select-field" placeholder="Role, company, or description" />
                   <div class="job-catalogue-filters">
                     <div><label for="job-role-filter" class="font-mono-tech">ROLE FAMILY</label><select id="job-role-filter" class="select-field"><option value="">All roles</option><option value="backend">Backend</option><option value="frontend">Frontend</option><option value="data_analyst">Data analyst</option><option value="data_engineer">Data engineer</option><option value="ml_engineer">ML engineer</option><option value="platform">Platform / DevOps</option><option value="qa_automation">QA / Automation</option><option value="security">Security</option><option value="systems">Systems</option><option value="distributed">Distributed systems</option></select></div>
@@ -176,6 +182,7 @@
                   <p class="job-import-note">Resume matching sends resume text to the configured RIGOR backend for transient processing; it is not saved or sent to an external AI provider. AI job analysis and question generation send selected job context to the configured provider.</p>
                   <button type="button" class="btn btn-sm" id="btn-ai-job-analysis" disabled>AI-ASSISTED JOB ANALYSIS</button>
                   <button type="button" class="btn btn-sm" id="btn-match-resume" disabled>MATCH LOCAL RESUME</button>
+                  <button type="button" class="btn btn-sm" id="btn-load-demo-resume">USE FICTIONAL RESUME EXAMPLE</button>
                   <button type="button" class="btn btn-sm" id="btn-generate-questions" disabled>GENERATE UP TO 3 GAP QUESTIONS</button>
                   <div id="resume-job-match-report" aria-live="polite"></div>
                   <div id="ai-job-analysis-report" aria-live="polite"></div>
