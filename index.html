@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RIGOR // Technical Resume Interrogation & Practice Workbench</title>
+  <!-- Editorial & Engineering Typography (Zero generic AI SaaS fonts) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,600&display=swap" rel="stylesheet">
+  <!-- Client-side PDF & DOCX parsing libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [["$", "$"], ["\\(", "\\)"]],
+        displayMath: [["$$", "$$"], ["\\[", "\\]"]],
+        processEscapes: true
+      },
+      options: {
+        skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+      },
+      startup: { typeset: false }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js"></script>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div class="workbench-shell">
+    <!-- Top Specification Masthead -->
+    <header class="masthead">
+      <div class="masthead-telemetry">
+        <div>
+          <span>SPEC-DOC // RIGOR-v5.0</span>
+          <span style="margin: 0 8px;">|</span>
+          <span>ATS RESUME REVIEW &amp; ROLE-BASED INTERVIEW PRACTICE</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <span id="telemetry-status">PARSER: READY // ZERO-BLUFF PROTOCOL</span>
+          <button type="button" id="btn-theme-toggle" class="btn btn-sm" style="padding: 2px 8px; font-size: 10px;">
+            THEME: ARCHIVAL PAPER
+          </button>
+        </div>
+      </div>
+
+      <div class="masthead-main">
+        <div class="brand-block">
+          <div class="brand-kicker">
+            <span>[ TECHNICAL DEPTH VERIFICATION SYSTEM ]</span>
+          </div>
+          <h1 class="brand-title">RIGOR // Resume Technical Interrogator &amp; Practice Forge</h1>
+          <p class="brand-subtitle">
+            Choose a job track for distinct interview drills, then add your resume for local ATS-style feedback and claim-specific follow-ups.
+          </p>
+        </div>
+
+        <div class="masthead-stats">
+          <div class="stat-cell">
+            <span class="stat-label">EXTRACTED CLAIMS</span>
+            <span class="stat-value" id="stat-claims-count">0</span>
+          </div>
+          <div class="stat-cell">
+            <span class="stat-label">INTERROGATION PROBES</span>
+            <span class="stat-value" id="stat-questions-count">0</span>
+          </div>
+          <div class="stat-cell">
+            <span class="stat-label">PRACTICED / GRADED</span>
+            <span class="stat-value" id="stat-practiced-count">0 / 0</span>
+          </div>
+          <div class="stat-cell">
+            <span class="stat-label">SIGNAL DEPTH SCORE</span>
+            <span class="stat-value" id="stat-readiness-score">0%</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Primary Workbench Navigation -->
+    <nav class="nav-bar" aria-label="Main Workbench Views">
+      <button type="button" class="nav-tab active" data-view="dossier">
+        <span class="tab-num">01</span> RESUME DOSSIER &amp; PARSER
+      </button>
+      <button type="button" class="nav-tab" data-view="interrogation">
+        <span class="tab-num">02</span> LIVE INTERROGATION ROOM
+      </button>
+      <button type="button" class="nav-tab" data-view="compendium">
+        <span class="tab-num">03</span> ANSWER COMPENDIUM &amp; STUDY BANK
+      </button>
+      <button type="button" class="nav-tab" data-view="stresstest">
+        <span class="tab-num">04</span> ARCHITECTURE STRESS-TEST &amp; MATH
+      </button>
+      <button type="button" class="nav-tab" data-view="ledger">
+        <span class="tab-num">05</span> READINESS LEDGER
+      </button>
+      <div class="nav-actions" style="padding: 6px 12px; gap: 8px;">
+        <button type="button" id="btn-export-dossier" class="btn btn-sm">
+          EXPORT FULL Q&amp;A (.MD)
+        </button>
+      </div>
+    </nav>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 01: RESUME DOSSIER & CLAIM DECOMPILER                            -->
+    <!-- ===================================================================== -->
+    <main id="view-dossier" class="view-section">
+      <div class="workspace-grid">
+        <!-- Left Column: Upload, Preset Selector, Raw Resume Editor & Config -->
+        <div style="display: flex; flex-direction: column; gap: 18px;">
+          <section class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>[SEC-1A] RESUME INGESTION &amp; FILE PARSER</span>
+              </div>
+              <span class="stamp stamp-cobalt" id="ingest-file-badge">SOURCE: ROLE-BASED PRACTICE</span>
+            </div>
+            <div class="panel-body" style="display: flex; flex-direction: column; gap: 14px;">
+              <!-- Drag & Drop Zone -->
+              <div id="resume-dropzone" class="upload-zone" tabindex="0" role="button" aria-label="Upload Resume File">
+                <input type="file" id="resume-file-input" accept=".pdf,.docx,.txt,.md" style="display: none;" />
+                <div class="font-mono-tech" style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">
+                  [ CLICK OR DRAG &amp; DROP RESUME FILE HERE ]
+                </div>
+                <div style="font-size: 12.5px; color: var(--ink-secondary);">
+                  Parses <strong>.PDF</strong>, <strong>.DOCX</strong>, <strong>.TXT</strong>, or <strong>.MD</strong> locally in browser memory — or paste raw text below.
+                </div>
+              </div>
+
+              <div class="role-selector">
+                <label for="select-job-category" class="font-mono-tech">
+                  CHOOSE THE ROLE YOU WANT TO PRACTICE:
+                </label>
+                <select id="select-job-category" class="select-field">
+                  <option value="backend">Backend Engineer</option>
+                  <option value="frontend">Frontend Engineer</option>
+                  <option value="ml_systems">AI / ML Systems Engineer</option>
+                  <option value="platform">Cloud / Platform Engineer</option>
+                  <option value="data">Data Infrastructure Engineer</option>
+                  <option value="security">Security Engineer</option>
+                  <option value="systems">Systems Engineer</option>
+                  <option value="distributed">Distributed Systems Engineer</option>
+                </select>
+                <p id="job-category-description" class="role-description"></p>
+              </div>
+
+              <!-- Interrogation Calibration Controls -->
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 6px; border-top: 1px solid var(--border-subtle);">
+                <div>
+                  <label for="select-seniority" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                    TARGET CALIBRATION BAR:
+                  </label>
+                  <select id="select-seniority" class="select-field">
+                    <option value="L5">L5 — Senior Engineer (Internals &amp; Production)</option>
+                    <option value="L6" selected>L6 — Staff / Principal (Architecture &amp; Failure Modes)</option>
+                    <option value="L4">L4 — Mid-Level (Core Mechanisms &amp; Execution)</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="select-focus-mode" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                    INTERROGATION VECTOR:
+                  </label>
+                  <select id="select-focus-mode" class="select-field">
+                    <option value="ALL" selected>Full Spectrum (Resume Claims + Stack Internals)</option>
+                    <option value="CLAIMS">Strict Resume Claim Cross-Examination</option>
+                    <option value="INTERNALS">Deep Runtime, Storage &amp; Kernel Internals</option>
+                    <option value="FAILURE">Production Failure Modes &amp; Scale Limits</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Raw Resume Text Editor -->
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label for="resume-raw-textarea" class="font-mono-tech" style="font-size: 11px; font-weight: 600;">
+                    RAW RESUME SOURCE BUFFER (EDITABLE):
+                  </label>
+                  <button type="button" id="btn-clear-resume" class="btn btn-sm" style="padding: 2px 6px; font-size: 10px;">
+                    CLEAR BUFFER
+                  </button>
+                </div>
+                <textarea id="resume-raw-textarea" class="textarea-field" rows="13" placeholder="Paste your full technical resume here (experience bullets, architecture metrics, tech stack, projects)..."></textarea>
+              </div>
+
+              <!-- Action Buttons -->
+              <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                <button type="button" id="btn-compile-resume" class="btn btn-primary" style="flex: 1;">
+                  COMPILE INTERROGATION DOSSIER &amp; GENERATE INTERVIEW &rarr;
+                </button>
+                <button type="button" id="btn-launch-interrogation" class="btn btn-vermilion">
+                  ENTER INTERROGATION ROOM
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Right Column: Decompiled AST Dossier, Detected Stack & Claim Vulnerability Matrix -->
+        <div style="display: flex; flex-direction: column; gap: 18px;">
+          <section class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>[SEC-1B] DECOMPILED TECHNICAL STACK &amp; PROBING SURFACE</span>
+              </div>
+              <span class="stamp stamp-vermilion" id="dossier-scrutiny-badge">HIGH-SCRUTINY AUDIT</span>
+            </div>
+            <div class="panel-body" style="display: flex; flex-direction: column; gap: 16px;">
+              <!-- Detected Technologies Matrix -->
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase;">
+                    DETECTED TECHNOLOGIES &amp; INTERNAL PROBE TARGETS:
+                  </span>
+                  <span class="font-mono-tech" style="font-size: 11px; color: var(--ink-muted);" id="detected-tech-count">0 DETECTED</span>
+                </div>
+                <div id="detected-tech-badges" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+              </div>
+
+              <section class="ats-panel" aria-labelledby="ats-heading">
+                <div class="ats-heading-row">
+                  <div>
+                    <span class="font-mono-tech ats-kicker">LOCAL RESUME CHECK</span>
+                    <h2 id="ats-heading" class="font-serif-editorial">ATS-friendly format review</h2>
+                  </div>
+                  <div class="ats-score-wrap">
+                    <span id="ats-score" class="ats-score">--</span>
+                    <span class="font-mono-tech">/ 100</span>
+                  </div>
+                </div>
+                <p id="ats-summary" class="ats-summary">Upload or paste a resume, then compile it to see a role-specific review.</p>
+                <p class="ats-rubric">Score weights: contact 15 · headings 20 · role keywords 25 · metrics 15 · action verbs 10 · length 10 · plain structure 5.</p>
+                <div class="ats-results-grid">
+                  <div>
+                    <h3>Strengths</h3>
+                    <ul id="ats-strengths"></ul>
+                  </div>
+                  <div>
+                    <h3>Limitations &amp; fixes</h3>
+                    <ul id="ats-fixes"></ul>
+                  </div>
+                </div>
+                <p class="ats-disclaimer">Heuristic guidance only—not an official ETS or ATS score. Layout checks are limited to extracted text; your CV is analyzed locally in this browser.</p>
+              </section>
+
+              <!-- Custom Claim / Topic Injector -->
+              <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                <label for="custom-claim-input" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 6px;">
+                  INJECT SPECIFIC RESUME CLAIM OR TECHNOLOGY TO INTERROGATE:
+                </label>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" id="custom-claim-input" class="input-field" placeholder="e.g., Migrated auth service to Rust &amp; Redis cluster handling 45,000 RPS at p99 &lt; 8ms" />
+                  <button type="button" id="btn-inject-claim" class="btn btn-sm" style="white-space: nowrap;">
+                    + INJECT CLAIM
+                  </button>
+                </div>
+              </div>
+
+              <!-- Extracted Verbatim Resume Claims Table -->
+              <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase;">
+                    EXTRACTED RESUME CLAIMS &amp; LINKED INTERROGATION PROBES:
+                  </span>
+                  <span class="font-mono-tech" style="font-size: 11px; color: var(--ink-secondary);">
+                    CLICK ANY CLAIM TO JUMP TO ITS PROBE
+                  </span>
+                </div>
+                <div style="max-height: 430px; overflow-y: auto; border: 1px solid var(--border-strong);">
+                  <table class="spec-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 68px;">ID</th>
+                        <th>VERBATIM RESUME CLAIM / DETECTED ARTIFACT</th>
+                        <th style="width: 145px;">SCRUTINY VECTOR</th>
+                        <th style="width: 90px;">ACTION</th>
+                      </tr>
+                    </thead>
+                    <tbody id="extracted-claims-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 02: LIVE TECHNICAL INTERROGATION ROOM                            -->
+    <!-- ===================================================================== -->
+    <main id="view-interrogation" class="view-section hidden">
+      <div class="interrogation-grid">
+        <!-- Left Rail: Question Index Queue -->
+        <aside class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>INTERROGATION QUEUE</span>
+            </div>
+            <span class="stamp" id="queue-progress-badge">1 / 12</span>
+          </div>
+          <div style="padding: 10px 12px; border-bottom: 1px solid var(--border-strong); background-color: var(--bg-primary);">
+            <input type="text" id="queue-search-input" class="input-field" style="padding: 6px 9px; font-size: 11.5px;" placeholder="Filter probes by tech or topic..." />
+          </div>
+          <div id="interrogation-queue-list" style="max-height: 680px; overflow-y: auto;"></div>
+        </aside>
+
+        <!-- Main Interrogation Stage -->
+        <div style="display: flex; flex-direction: column; gap: 18px;">
+          <!-- Active Question Specification Sheet -->
+          <section class="panel">
+            <div class="panel-header">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span class="stamp stamp-vermilion" id="active-q-id">PROBE-01</span>
+                <span class="stamp stamp-cobalt" id="active-q-domain">DISTRIBUTED SYSTEMS</span>
+                <span class="stamp" id="active-q-level">CALIBRATION: L6 STAFF</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="font-mono-tech" id="interview-timer-display" style="font-size: 13px; font-weight: 700; padding: 3px 8px; border: 1px solid var(--border-strong); background-color: var(--bg-primary);">
+                  00:00
+                </span>
+                <button type="button" id="btn-timer-toggle" class="btn btn-sm">PAUSE</button>
+                <button type="button" id="btn-timer-reset" class="btn btn-sm">RESET</button>
+              </div>
+            </div>
+
+            <div class="panel-body">
+              <!-- Verbatim Bound Claim from Candidate's Resume -->
+              <div class="resume-claim-banner">
+                <div class="font-mono-tech" style="font-size: 10.5px; font-weight: 700; color: var(--accent-vermilion); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px;">
+                  <span id="active-q-claim-label">SOURCE ARTIFACT FROM YOUR RESUME:</span>
+                </div>
+                <blockquote id="active-q-claim" class="font-mono-tech" style="font-size: 12.5px; color: var(--ink-primary);"></blockquote>
+              </div>
+
+              <!-- Question Headline & Deep Technical Prompt -->
+              <h2 id="active-q-title" class="font-serif-editorial" style="font-size: 1.55rem; font-weight: 700; margin-bottom: 10px; line-height: 1.25;"></h2>
+              <p id="active-q-prompt" style="font-size: 15.5px; line-height: 1.65; color: var(--ink-primary); margin-bottom: 18px;"></p>
+
+              <!-- Why the Interviewer Is Asking This (Hidden Signal) -->
+              <div style="border: 1px solid var(--border-subtle); background-color: var(--bg-primary); padding: 10px 14px; margin-bottom: 18px;">
+                <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--accent-cobalt); text-transform: uppercase; margin-bottom: 3px;">
+                  [INTERVIEWER CALIBRATION INTENT // WHAT THIS PROBES]
+                </div>
+                <div id="active-q-intent" style="font-size: 13.5px; color: var(--ink-secondary);"></div>
+              </div>
+
+              <!-- 3-Level Escalating Follow-Up Probes ("Push Deeper") -->
+              <div style="margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span class="font-mono-tech" style="font-size: 11.5px; font-weight: 700; text-transform: uppercase;">
+                    ESCALATING FOLLOW-UP DRILL (CLICK TO EXPAND EACH LEVEL &amp; ITS ANSWER):
+                  </span>
+                  <button type="button" id="btn-expand-all-probes" class="btn btn-sm">
+                    TOGGLE ALL 3 LEVELS
+                  </button>
+                </div>
+                <div id="active-q-followups"></div>
+              </div>
+
+              <!-- Candidate Practice Response & Live Technical Evaluator -->
+              <div style="border-top: 1.5px solid var(--border-strong); padding-top: 18px;">
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px;">
+                  <label for="candidate-answer-input" class="font-mono-tech" style="font-size: 12px; font-weight: 700; text-transform: uppercase;">
+                    YOUR TECHNICAL DEFENSE / SCRATCHPAD (WRITE ANSWER, PSEUDOCODE, OR CAPACITY MATH):
+                  </label>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btn-voice-dictate" class="btn btn-sm">
+                      MIC: START DICTATION
+                    </button>
+                    <button type="button" id="btn-insert-scaffold" class="btn btn-sm">
+                      INSERT STAFF ANSWER FRAMEWORK
+                    </button>
+                  </div>
+                </div>
+
+                <textarea id="candidate-answer-input" class="textarea-field" rows="7" placeholder="Articulate the exact internal mechanism, data structures, wire protocol, concurrency invariants, and failure mode mitigations..."></textarea>
+
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px;">
+                  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <button type="button" id="btn-evaluate-answer" class="btn btn-primary">
+                      EVALUATE MY TECHNICAL DEPTH
+                    </button>
+                    <button type="button" id="btn-toggle-reference" class="btn btn-cobalt">
+                      REVEAL COMPLETE REFERENCE ANSWER &amp; BLUEPRINT
+                    </button>
+                  </div>
+
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btn-prev-question" class="btn btn-sm">&larr; PREV PROBE</button>
+                    <button type="button" id="btn-next-question" class="btn btn-sm">NEXT PROBE &rarr;</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Automated Technical Evaluation Result Box -->
+              <div id="evaluation-result-panel" class="hidden" style="margin-top: 18px; border: 1.5px solid var(--border-strong); background-color: var(--bg-primary); padding: 16px;">
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-strong); padding-bottom: 10px; margin-bottom: 12px;">
+                  <div>
+                    <span class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase;">AUTOMATED TECHNICAL SIGNAL AUDIT</span>
+                    <div id="eval-verdict-headline" class="font-serif-editorial" style="font-size: 1.2rem; font-weight: 700; margin-top: 2px;"></div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <span class="stamp stamp-forest" id="eval-score-badge" style="font-size: 13px; padding: 4px 10px;">SIGNAL: 0%</span>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+                  <div style="border: 1px solid var(--border-subtle); background-color: var(--bg-surface); padding: 10px 12px;">
+                    <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--accent-forest); margin-bottom: 6px;">
+                      [+ VERIFIED TECHNICAL SIGNALS HIT]
+                    </div>
+                    <div id="eval-signals-hit" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+                  </div>
+                  <div style="border: 1px solid var(--border-subtle); background-color: var(--bg-surface); padding: 10px 12px;">
+                    <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--accent-vermilion); margin-bottom: 6px;">
+                      [- MISSING INTERNALS / BLINDSPOTS TO ADD]
+                    </div>
+                    <div id="eval-signals-missed" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+                  </div>
+                </div>
+
+                <div id="eval-feedback-notes" style="font-size: 13.5px; color: var(--ink-secondary); margin-bottom: 12px;"></div>
+
+                <!-- Self-Calibration Rubric -->
+                <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+                  <span class="font-mono-tech" style="font-size: 11px; font-weight: 700;">RECORD MASTERY STATUS IN LEDGER:</span>
+                  <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                    <button type="button" class="btn btn-sm rubric-grade-btn" data-status="review" data-score="45">
+                      NEEDS REVIEW (SURFACE LEVEL)
+                    </button>
+                    <button type="button" class="btn btn-sm rubric-grade-btn" data-status="solid" data-score="78">
+                      PRODUCTION SOLID (L5)
+                    </button>
+                    <button type="button" class="btn btn-sm rubric-grade-btn" data-status="mastered" data-score="96">
+                      MASTERED STAFF DEPTH (L6)
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Complete Reference Answer & Staff Blueprint Panel -->
+              <div id="reference-answer-panel" class="hidden" style="margin-top: 18px; border: 2px solid var(--border-strong); background-color: var(--bg-surface);">
+                <div class="panel-header" style="background-color: var(--ink-primary); color: var(--bg-surface);">
+                  <div class="panel-title">
+                    <span>CANONICAL STAFF-LEVEL TECHNICAL ANSWER &amp; ARCHITECTURE BLUEPRINT</span>
+                  </div>
+                  <button type="button" id="btn-copy-reference" class="btn btn-sm" style="background-color: var(--bg-surface); color: var(--ink-primary);">
+                    COPY FULL ANSWER
+                  </button>
+                </div>
+                <div class="panel-body" style="display: flex; flex-direction: column; gap: 16px;">
+                  <div>
+                    <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--accent-cobalt); text-transform: uppercase; margin-bottom: 4px;">
+                      01 // UNDER-THE-HOOD MECHANISM &amp; INTERNAL DATA STRUCTURES
+                    </div>
+                    <div id="ref-mechanism" style="font-size: 14.5px; line-height: 1.65;"></div>
+                  </div>
+
+                  <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                    <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; color: var(--accent-vermilion); text-transform: uppercase; margin-bottom: 4px;">
+                      02 // PRODUCTION FAILURE MODES, EDGE CASES &amp; MITIGATIONS
+                    </div>
+                    <div id="ref-failures" style="font-size: 14.5px; line-height: 1.65;"></div>
+                  </div>
+
+                  <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                    <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">
+                      03 // IMPLEMENTATION / WIRE PROTOCOL / MEMORY BLUEPRINT
+                    </div>
+                    <pre id="ref-code" class="code-blueprint"></pre>
+                  </div>
+
+                  <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                    <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">
+                      04 // CALIBRATION MATRIX: L4 ANSWER VS. L6 STAFF ANSWER
+                    </div>
+                    <table class="spec-table">
+                      <thead>
+                        <tr>
+                          <th style="width: 50%;">L4 / SURFACE-LEVEL ANSWER (REJECTED AT STAFF BAR)</th>
+                          <th style="width: 50%;">L6 / PRINCIPAL-DEPTH ANSWER (STRONG HIRE SIGNAL)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td id="ref-l4-contrast" style="color: var(--ink-secondary);"></td>
+                          <td id="ref-l6-contrast" style="font-weight: 500;"></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 03: COMPLETE ANSWER COMPENDIUM & STUDY BANK                      -->
+    <!-- ===================================================================== -->
+    <main id="view-compendium" class="view-section hidden">
+      <div style="padding: 20px; display: flex; flex-direction: column; gap: 18px;">
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>[SEC-03] MASTER QUESTION &amp; ANSWER COMPENDIUM (ALL QUESTIONS + FULL ANSWERS)</span>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" id="btn-compendium-expand-all" class="btn btn-sm">EXPAND ALL ANSWERS</button>
+              <button type="button" id="btn-compendium-collapse-all" class="btn btn-sm">COLLAPSE ALL ANSWERS</button>
+              <button type="button" id="btn-open-custom-q-modal" class="btn btn-sm btn-primary">+ ADD CUSTOM QUESTION</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <!-- Filter Bar -->
+            <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+              <div>
+                <label for="compendium-search" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  SEARCH QUESTIONS, ANSWERS, OR CODE BLUEPRINTS:
+                </label>
+                <input type="text" id="compendium-search" class="input-field" placeholder="Search e.g. MVCC, Raft, Fiber, PagedAttention, epoll, stampede..." />
+              </div>
+              <div>
+                <label for="compendium-domain-filter" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  FILTER BY TECHNICAL DOMAIN:
+                </label>
+                <select id="compendium-domain-filter" class="select-field">
+                  <option value="ALL">All Domains</option>
+                </select>
+              </div>
+              <div>
+                <label for="compendium-status-filter" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  FILTER BY MASTERY STATUS:
+                </label>
+                <select id="compendium-status-filter" class="select-field">
+                  <option value="ALL">All Statuses</option>
+                  <option value="unpracticed">Unpracticed</option>
+                  <option value="review">Needs Review</option>
+                  <option value="solid">Production Solid</option>
+                  <option value="mastered">Mastered (L6)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Inline Add Custom Question Drawer (Hidden by default) -->
+            <div id="custom-q-drawer" class="hidden" style="border: 1.5px solid var(--border-strong); background-color: var(--bg-primary); padding: 16px; margin-bottom: 18px;">
+              <div class="font-mono-tech" style="font-size: 12px; font-weight: 700; margin-bottom: 10px;">
+                [CREATE CUSTOM TECHNICAL PROBE &amp; REFERENCE ANSWER]
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                <input type="text" id="new-q-title" class="input-field" placeholder="Question Title (e.g. Zero-Copy Kernel Bypass with io_uring)" />
+                <input type="text" id="new-q-domain" class="input-field" placeholder="Domain (e.g. LINUX KERNEL &amp; I/O)" />
+              </div>
+              <input type="text" id="new-q-claim" class="input-field" style="margin-bottom: 10px;" placeholder="Bound Resume Claim (e.g. Built high-throughput packet ingestion engine)" />
+              <textarea id="new-q-prompt" class="textarea-field" rows="2" style="margin-bottom: 10px;" placeholder="Detailed technical question prompt..."></textarea>
+              <textarea id="new-q-answer" class="textarea-field" rows="3" style="margin-bottom: 10px;" placeholder="Full reference mechanism, failure modes, and technical solution..."></textarea>
+              <div style="display: flex; gap: 8px;">
+                <button type="button" id="btn-save-custom-q" class="btn btn-primary btn-sm">SAVE TO COMPENDIUM</button>
+                <button type="button" id="btn-cancel-custom-q" class="btn btn-sm">CANCEL</button>
+              </div>
+            </div>
+
+            <!-- Compendium List -->
+            <div id="compendium-cards-container" style="display: flex; flex-direction: column; gap: 16px;"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 04: ARCHITECTURE STRESS-TEST & BACK-OF-THE-ENVELOPE CALCULATOR   -->
+    <!-- ===================================================================== -->
+    <main id="view-stresstest" class="view-section hidden">
+      <div class="workspace-grid">
+        <!-- Left: Production Incident & System Design Stress-Test Simulator -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>[SEC-4A] PRODUCTION INCIDENT &amp; ARCHITECTURE STRESS-TEST</span>
+            </div>
+            <span class="stamp stamp-vermilion">SEV-1 SIMULATION</span>
+          </div>
+          <div class="panel-body" style="display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <label for="incident-selector" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 6px;">
+                SELECT PRODUCTION FAILURE SCENARIO (SYNTHESIZED FROM STACK):
+              </label>
+              <select id="incident-selector" class="select-field"></select>
+            </div>
+
+            <div style="border: 1.5px solid var(--border-strong); background-color: var(--bg-primary); padding: 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span class="stamp stamp-vermilion" id="incident-pager-code">PAGERDUTY // 03:14 UTC</span>
+                <span class="font-mono-tech" style="font-size: 11px;" id="incident-stack-tag"></span>
+              </div>
+              <h3 id="incident-title" class="font-serif-editorial" style="font-size: 1.35rem; font-weight: 700; margin-bottom: 8px;"></h3>
+              <p id="incident-symptoms" style="font-size: 14px; line-height: 1.6; margin-bottom: 12px;"></p>
+              <pre id="incident-telemetry-dump" class="code-blueprint" style="font-size: 11.5px;"></pre>
+            </div>
+
+            <div>
+              <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">
+                CHOOSE YOUR FIRST DIAGNOSTIC &amp; MITIGATION VECTOR:
+              </div>
+              <div id="incident-options-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+
+            <div id="incident-postmortem-box" class="hidden" style="border: 1.5px solid var(--border-strong); background-color: var(--bg-surface); padding: 14px;">
+              <div class="font-mono-tech" id="incident-choice-verdict" style="font-size: 12px; font-weight: 700; margin-bottom: 6px;"></div>
+              <div id="incident-root-cause" style="font-size: 14px; line-height: 1.6;"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right: Interactive Back-of-the-Envelope Systems Capacity & Latency Calculator -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>[SEC-4B] BACK-OF-THE-ENVELOPE CAPACITY &amp; STORAGE WORKBENCH</span>
+            </div>
+            <span class="stamp stamp-cobalt">SYSTEM DESIGN MATH</span>
+          </div>
+          <div class="panel-body" style="display: flex; flex-direction: column; gap: 16px;">
+            <p style="font-size: 13.5px; color: var(--ink-secondary);">
+              Staff-level system design interviews require defending exact throughput, bandwidth, RAM working-set, and disk storage numbers. Adjust parameters below to compute real-time capacity requirements:
+            </p>
+            <div class="math-formula">
+              <div>Peak write load</div>
+              <div>$$Q_{\mathrm{peak}} = \frac{DAU \times W_{\mathrm{day}}}{86{,}400} \times P$$</div>
+              <div>Three-year replicated storage</div>
+              <div>$$S_{\mathrm{3y}} = \frac{DAU \times W_{\mathrm{day}} \times B \times 365 \times 3}{2^{40}} \text{ TiB}$$</div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div>
+                <label for="calc-dau" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  DAILY ACTIVE USERS (DAU):
+                </label>
+                <input type="number" id="calc-dau" class="input-field" value="15000000" min="1000" step="100000" />
+              </div>
+              <div>
+                <label for="calc-writes-per-user" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  WRITE EVENTS / USER / DAY:
+                </label>
+                <input type="number" id="calc-writes-per-user" class="input-field" value="12" min="1" />
+              </div>
+              <div>
+                <label for="calc-reads-per-user" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  READ QUERIES / USER / DAY:
+                </label>
+                <input type="number" id="calc-reads-per-user" class="input-field" value="80" min="1" />
+              </div>
+              <div>
+                <label for="calc-payload-bytes" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  AVG PAYLOAD + INDEX SIZE (BYTES):
+                </label>
+                <input type="number" id="calc-payload-bytes" class="input-field" value="1024" min="64" />
+              </div>
+              <div>
+                <label for="calc-peak-multiplier" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  PEAK-TO-AVERAGE TRAFFIC RATIO:
+                </label>
+                <input type="number" id="calc-peak-multiplier" class="input-field" value="3.5" min="1" step="0.5" />
+              </div>
+              <div>
+                <label for="calc-cache-ratio" class="font-mono-tech" style="display: block; font-size: 11px; font-weight: 600; margin-bottom: 4px;">
+                  HOT WORKING SET CACHE (% OF DAILY):
+                </label>
+                <input type="number" id="calc-cache-ratio" class="input-field" value="20" min="1" max="100" />
+              </div>
+            </div>
+
+            <!-- Computed Capacity Table -->
+            <table class="spec-table">
+              <thead>
+                <tr>
+                  <th>SYSTEM DIMENSION</th>
+                  <th>COMPUTED METRIC</th>
+                  <th>ARCHITECTURAL IMPLICATION</th>
+                </tr>
+              </thead>
+              <tbody id="capacity-results-tbody"></tbody>
+            </table>
+
+            <!-- Latency Reference Numbers Table -->
+            <div>
+              <div class="font-mono-tech" style="font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">
+                CANONICAL HARDWARE &amp; NETWORK LATENCY CONSTANTS (2026 REFERENCE):
+              </div>
+              <table class="spec-table" style="font-size: 12px;">
+                <thead>
+                  <tr>
+                    <th>OPERATION</th>
+                    <th>LATENCY</th>
+                    <th>DESIGN CONSEQUENCE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="font-mono-tech">L1 / L2 Cache Reference</td>
+                    <td class="font-mono-tech">1 ns / 4 ns</td>
+                    <td>Keep hot loops cache-line aligned (64B); avoid pointer chasing</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono-tech">Mutex Lock / Unlock (Uncontended)</td>
+                    <td class="font-mono-tech">~15–25 ns</td>
+                    <td>Contended atomic CAS across NUMA sockets spikes to &gt;200ns</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono-tech">Main Memory (DDR5 DRAM) Reference</td>
+                    <td class="font-mono-tech">~80–100 ns</td>
+                    <td>Redis in-memory lookup is dominated by network I/O, not RAM</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono-tech">NVMe SSD Random Read (4KB)</td>
+                    <td class="font-mono-tech">~20–70 &mu;s</td>
+                    <td>WAL fsync group-commit is essential for &gt;25k write TPS</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono-tech">Intra-AZ Datacenter RTT (TCP)</td>
+                    <td class="font-mono-tech">~250–500 &mu;s</td>
+                    <td>Sequential N+1 RPCs (50 calls) add 25ms tail latency</td>
+                  </tr>
+                  <tr>
+                    <td class="font-mono-tech">Cross-Continent Quorum RTT (US-East &harr; EU)</td>
+                    <td class="font-mono-tech">~75–90 ms</td>
+                    <td>Synchronous Paxos/Raft across regions caps write latency floor</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 05: READINESS LEDGER & PRACTICE TELEMETRY                        -->
+    <!-- ===================================================================== -->
+    <main id="view-ledger" class="view-section hidden">
+      <div style="padding: 20px; display: flex; flex-direction: column; gap: 18px;">
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>[SEC-05] TECHNICAL READINESS LEDGER &amp; DOMAIN MASTERY AUDIT</span>
+            </div>
+            <button type="button" id="btn-reset-progress" class="btn btn-sm">
+              RESET PRACTICE LEDGER
+            </button>
+          </div>
+          <div class="panel-body" style="display: flex; flex-direction: column; gap: 20px;">
+            <!-- Summary Telemetry Row -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+              <div style="border: 1.5px solid var(--border-strong); padding: 14px; background-color: var(--bg-primary);">
+                <div class="font-mono-tech" style="font-size: 11px; color: var(--ink-muted);">OVERALL INTERVIEW READINESS</div>
+                <div id="ledger-overall-pct" class="font-mono-tech" style="font-size: 28px; font-weight: 700; margin: 6px 0;">0%</div>
+                <div class="meter-track"><div id="ledger-overall-bar" class="meter-fill" style="width: 0%;"></div></div>
+              </div>
+              <div style="border: 1.5px solid var(--border-strong); padding: 14px; background-color: var(--bg-primary);">
+                <div class="font-mono-tech" style="font-size: 11px; color: var(--ink-muted);">MASTERED (L6 STAFF BAR)</div>
+                <div id="ledger-mastered-count" class="font-mono-tech" style="font-size: 28px; font-weight: 700; color: var(--accent-forest); margin-top: 6px;">0</div>
+                <div style="font-size: 12px; color: var(--ink-secondary);">Probes defended with full internals</div>
+              </div>
+              <div style="border: 1.5px solid var(--border-strong); padding: 14px; background-color: var(--bg-primary);">
+                <div class="font-mono-tech" style="font-size: 11px; color: var(--ink-muted);">PRODUCTION SOLID (L5 BAR)</div>
+                <div id="ledger-solid-count" class="font-mono-tech" style="font-size: 28px; font-weight: 700; color: var(--accent-cobalt); margin-top: 6px;">0</div>
+                <div style="font-size: 12px; color: var(--ink-secondary);">Core mechanism verified; refine edge cases</div>
+              </div>
+              <div style="border: 1.5px solid var(--border-strong); padding: 14px; background-color: var(--bg-primary);">
+                <div class="font-mono-tech" style="font-size: 11px; color: var(--ink-muted);">HIGH-RISK BLINDSPOTS</div>
+                <div id="ledger-review-count" class="font-mono-tech" style="font-size: 28px; font-weight: 700; color: var(--accent-vermilion); margin-top: 6px;">0</div>
+                <div style="font-size: 12px; color: var(--ink-secondary);">Flagged for immediate study</div>
+              </div>
+            </div>
+
+            <!-- Domain Breakdown Table -->
+            <div>
+              <div class="font-mono-tech" style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">
+                MASTERY BREAKDOWN BY TECHNICAL DOMAIN:
+              </div>
+              <table class="spec-table">
+                <thead>
+                  <tr>
+                    <th>TECHNICAL DOMAIN</th>
+                    <th>TOTAL PROBES</th>
+                    <th>PRACTICED</th>
+                    <th>AVG SIGNAL DEPTH</th>
+                    <th>STATUS</th>
+                  </tr>
+                </thead>
+                <tbody id="ledger-domain-tbody"></tbody>
+              </table>
+            </div>
+
+            <!-- Saved Candidate Defense Log -->
+            <div>
+              <div class="font-mono-tech" style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">
+                SAVED CANDIDATE DEFENSE RESPONSES &amp; NOTES:
+              </div>
+              <table class="spec-table">
+                <thead>
+                  <tr>
+                    <th style="width: 90px;">PROBE ID</th>
+                    <th style="width: 260px;">QUESTION</th>
+                    <th>YOUR SAVED TECHNICAL DEFENSE</th>
+                    <th style="width: 120px;">SCORE / STATUS</th>
+                    <th style="width: 95px;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="ledger-history-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast Notification Banner -->
+  <div id="toast-banner" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
