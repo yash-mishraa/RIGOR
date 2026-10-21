@@ -16,7 +16,7 @@ async function request(path, options = {}) {
 }
 
 export const rigorApi = {
-  health: () => request("/health"),
+  health: () => request("/ready"),
   demoSession: () => request("/demo/session"),
   demoProgress: () => request("/demo/progress"),
   resetDemo: () => request("/demo/reset", { method: "POST" }),
